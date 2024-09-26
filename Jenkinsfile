@@ -270,5 +270,18 @@ pipeline {
                 }
             }
         }
+
+        stage('Verify Deployment') {
+            steps {
+                script {
+                    def verifyEnv = params.DEPLOY_ENV
+                    withKubeConfig(caCertificate: '', clusterName: ' devopsshack-cluster', contextName: '', credentialsId: 'k8-cred', namespace: 'webapps', restrictKubeConfigAccess: false, serverUrl: 'https://CD2B5D3658F51E7D9359BD04B4EE2A1A.gr7.us-east-1.eks.amazonaws.com') {
+                    sh "kubectl get pods -l version=${verifyEnv} -n ${KUBE_NAMESPACE}"
+                    sh "kubectl get svc backend-svc -n ${KUBE_NAMESPACE}"
+                    sh "kubectl get svc frontend-svc -n ${KUBE_NAMESPACE}"
+                    }
+                }
+            }
+        }
     }
 }
