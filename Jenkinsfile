@@ -214,6 +214,7 @@ pipeline {
             steps {
                 dir('Kubernetes-Manifests-file') {
                     withKubeConfig(caCertificate: '', clusterName: 'devopsshack-cluster', credentialsId: 'k8-cred', namespace: 'webapps') {
+                        sh "aws eks update-kubeconfig --name devopsshack-cluster --region us-east-1"
                         sh "kubectl apply -f Database -n ${KUBE_NAMESPACE}"
                     }
                 }
