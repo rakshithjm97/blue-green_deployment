@@ -31,7 +31,7 @@ pipeline {
         
         stage('Checkout from Git') {
             steps {
-                git branch: 'main', credentialsId: 'GITHUB', url: 'https://github.com/gyenoch/End-to-End-Kubernetes-Three-Tier-DevSecOps-Project.git'
+                git branch: 'main', credentialsId: 'GITHUB', url: 'https://github.com/gyenoch/Blue-Green-Deployment.git'
             }
         }
 
