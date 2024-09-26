@@ -246,12 +246,4 @@ pipeline {
             }
         }
     }
-
-    post {
-        always {
-            node {
-                cleanWs()  // Clean workspace in a node context
-            }
-        }
-    }
 }
