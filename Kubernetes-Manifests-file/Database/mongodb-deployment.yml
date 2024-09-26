@@ -13,6 +13,7 @@ spec:
       labels: 
         app: mongodb
     spec: 
+      serviceAccountName: jenkins
       containers:
       - name: mon
         image: mongo:4.4.6
