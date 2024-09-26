@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-svc
+  namespace: webapps
+spec: 
+  ports:
+  - port: 3500
+    protocol: TCP
+  type: ClusterIP
+  selector:
+    app: backend
+    version: blue  # This can be change to "green" when switching traffic

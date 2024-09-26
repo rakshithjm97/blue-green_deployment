@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: webapps
+  labels:
+    app: frontend
+    version: blue
+spec: 
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 25%
+  selector:
+    matchLabels: 
+      app: frontend
+      version: blue
+  template:
+    metadata:
+      labels:
+        app: frontend
+        version: blue
+    spec: 
+      serviceAccountName: jenkins
+      imagePullSecrets:
+      - name: ecr-registry-secret
+      containers:
+      - name: frontend
+        image: 091008253157.dkr.ecr.us-east-1.amazonaws.com/todoapp-frontend:blue
+        imagePullPolicy: Always
+        env:
+          - name: REACT_APP_BACKEND_URL
+            value: "http://amanpathakdevops.study/api/tasks"
+        ports:
+        - containerPort: 3000
