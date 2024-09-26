@@ -68,14 +68,6 @@ pipeline {
             }
         }
 
-        // stage('Quality Check') {
-        //     steps {
-        //         script {
-        //             waitForQualityGate abortPipeline: true, credentialsId: 'sonar-token'
-        //         }
-        //     }
-        // }
-
         stage('Quality Check') {
             parallel {
                 stage('Frontend Quality Check') {
@@ -128,7 +120,7 @@ pipeline {
                 stage('Trivy Frontend File Scan') {
                     steps {
                         dir('Application-Code/frontend') {
-                            sh 'trivy fs . > trivyfs.txt'
+                            sh 'trivy fs . >> trivyfs.txt'
                             script {
                                 def scanResults = readFile('trivyfs.txt')
                                 if (scanResults.contains('CRITICAL')) {
@@ -142,7 +134,7 @@ pipeline {
                 stage('Trivy Backend File Scan') {
                     steps {
                         dir('Application-Code/backend') {
-                            sh 'trivy fs . > trivyfs.txt'
+                            sh 'trivy fs . >> trivyfs.txt'
                             script {
                                 def scanResults = readFile('trivyfs.txt')
                                 if (scanResults.contains('CRITICAL')) {
@@ -155,26 +147,35 @@ pipeline {
             }
         }
 
-        stage('Build and Push Docker Images') {
+        stage('Build Tag and Push Docker Images') {
             parallel {
-                stage("Build and Push Frontend Docker Image") {
+                stage("Build Tag and Push Frontend Docker Image") {
                     steps {
                         dir('Application-Code/frontend') {
-                            sh 'docker system prune -f'
-                            sh 'docker container prune -f'
+                            // Conditional Docker pruning
+                            sh '''
+                                USED_DISK_SPACE=$(df / | tail -1 | awk \'{print $5}\' | sed \'s/%//\')
+                                if [ $USED_DISK_SPACE -gt 80 ]; then
+                                    echo "Disk space usage is above 80%, running docker system prune."
+                                    docker system prune -f
+                                    docker container prune -f
+                                else
+                                    echo "Disk space usage is below 80%, skipping prune."
+                                fi
+                            '''
                             sh 'docker build -t ${AWS_ECR_FRONTEND_REPO_NAME}:${TAG} .'
+                            sh 'docker tag ${AWS_ECR_FRONTEND_REPO_NAME}:${TAG} ${REPOSITORY_URI}${AWS_ECR_FRONTEND_REPO_NAME}:${TAG}'
                             sh 'aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${REPOSITORY_URI}'
                             sh 'docker push ${REPOSITORY_URI}${AWS_ECR_FRONTEND_REPO_NAME}:${TAG}'
                         }
                     }
                 }
 
-                stage("Build and Push Backend Docker Image") {
+                stage("Build Tag and Push Backend Docker Image") {
                     steps {
                         dir('Application-Code/backend') {
-                            sh 'docker system prune -f'
-                            sh 'docker container prune -f'
                             sh 'docker build -t ${AWS_ECR_BACKEND_REPO_NAME}:${TAG} .'
+                            sh 'docker tag ${AWS_ECR_BACKEND_REPO_NAME}:${TAG} ${REPOSITORY_URI}${AWS_ECR_BACKEND_REPO_NAME}:${TAG}'
                             sh 'aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${REPOSITORY_URI}'
                             sh 'docker push ${REPOSITORY_URI}${AWS_ECR_BACKEND_REPO_NAME}:${TAG}'
                         }
@@ -182,6 +183,7 @@ pipeline {
                 }
             }
         }
+
 
         stage("TRIVY Image Scan") {
             parallel {
