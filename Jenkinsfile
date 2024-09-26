@@ -76,7 +76,7 @@ pipeline {
             }
         }
 
-        stage('Security Scans') {
+        stage('Dependency Scans') {
             parallel {
                 stage('OWASP Frontend Dependency-Check') {
                     steps {
@@ -94,36 +94,34 @@ pipeline {
                             dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
                         }
                     }
-                }
+                }   
+            }
+        }
 
-                stage('Trivy File Scans') {
+        stage('Trivy File Scans') {
+            parallel {
+                stage('Trivy Frontend File Scan') {
                     steps {
-                        parallel {
-                            stage('Trivy Frontend File Scan') {
-                                steps {
-                                    dir('Application-Code/frontend') {
-                                        sh 'trivy fs . > trivyfs.txt'
-                                        script {
-                                            def scanResults = readFile('trivyfs.txt')
-                                            if (scanResults.contains('CRITICAL')) {
-                                                error("Critical vulnerabilities found in frontend file scan!")
-                                            }
-                                        }
-                                    }
+                        dir('Application-Code/frontend') {
+                            sh 'trivy fs . > trivyfs.txt'
+                            script {
+                                def scanResults = readFile('trivyfs.txt')
+                                if (scanResults.contains('CRITICAL')) {
+                                    error("Critical vulnerabilities found in frontend file scan!")
                                 }
                             }
+                        }
+                    }
+                }
 
-                            stage('Trivy Backend File Scan') {
-                                steps {
-                                    dir('Application-Code/backend') {
-                                        sh 'trivy fs . > trivyfs.txt'
-                                        script {
-                                            def scanResults = readFile('trivyfs.txt')
-                                            if (scanResults.contains('CRITICAL')) {
-                                                error("Critical vulnerabilities found in backend file scan!")
-                                            }
-                                        }
-                                    }
+                stage('Trivy Backend File Scan') {
+                    steps {
+                        dir('Application-Code/backend') {
+                            sh 'trivy fs . > trivyfs.txt'
+                            script {
+                                def scanResults = readFile('trivyfs.txt')
+                                if (scanResults.contains('CRITICAL')) {
+                                    error("Critical vulnerabilities found in backend file scan!")
                                 }
                             }
                         }
