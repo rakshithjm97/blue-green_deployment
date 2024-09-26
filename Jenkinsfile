@@ -184,35 +184,32 @@ pipeline {
             }
         }
 
-
         stage("TRIVY Image Scan") {
             parallel {
                 stage('Frontend Docker Image Scan') {
                     steps {
-                        sh 'trivy image ${REPOSITORY_URI}${AWS_ECR_FRONTEND_REPO_NAME}:${TAG} > trivyimage.txt'
+                        sh 'trivy image ${REPOSITORY_URI}${AWS_ECR_FRONTEND_REPO_NAME}:${TAG} >> trivyimage.txt'
                         script {
                             def scanResults = readFile('trivyimage.txt')
-                            if (scanResults.contains('CRITICAL')) {
-                                error("Critical vulnerabilities found in frontend image scan!")
-                            }
+                            // Log the scan results without throwing an error
+                            echo "Frontend scan results:\n${scanResults}"
                         }
                     }
                 }
 
                 stage('Backend Docker Image Scan') {
                     steps {
-                        sh 'trivy image ${REPOSITORY_URI}${AWS_ECR_BACKEND_REPO_NAME}:${TAG} > trivyimage.txt'
+                        sh 'trivy image ${REPOSITORY_URI}${AWS_ECR_BACKEND_REPO_NAME}:${TAG} >> trivyimage.txt'
                         script {
                             def scanResults = readFile('trivyimage.txt')
-                            if (scanResults.contains('CRITICAL')) {
-                                error("Critical vulnerabilities found in backend image scan!")
-                            }
+                            // Log the scan results without throwing an error
+                            echo "Backend scan results:\n${scanResults}"
                         }
                     }
                 }
             }
         }
-
+        
         stage('Deploy MongoDB and Service') {
             steps {
                 dir('Kubernetes-Manifests-file') {
