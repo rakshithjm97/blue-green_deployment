@@ -239,8 +239,16 @@ pipeline {
             steps {
                 dir('Kubernetes-Manifests-file/Deployment') {
                     script {
-                        def deploymentFrontend = (params.DEPLOY_ENV == 'blue') ? 'frontend-deployment-blue.yml' : 'frontend-deployment-green.yml'
-                        def deploymentBackend = (params.DEPLOY_ENV == 'blue') ? 'backend-deployment-blue.yml' : 'backend-deployment-green.yml'
+                        def deploymentFrontend = ""
+                        def deploymentBackend = ""
+
+                        if (params.DEPLOY_ENV == 'blue') {
+                            deploymentFrontend = 'frontend-deployment-blue.yml'
+                            deploymentBackend = 'backend-deployment-blue.yml'
+                        } else {
+                            deploymentFrontend = 'frontend-deployment-green.yml'
+                            deploymentBackend = 'backend-deployment-green.yml' 
+                        }
 
                         withKubeConfig(caCertificate: '', clusterName: 'devopsshack-cluster', credentialsId: 'k8-cred', namespace: 'webapps', restrictKubeConfigAccess: false, serverUrl: 'https://CD2B5D3658F51E7D9359BD04B4EE2A1A.gr7.us-east-1.eks.amazonaws.com') {
                             sh "kubectl apply -f ${deploymentBackend} --record -n ${KUBE_NAMESPACE}"
