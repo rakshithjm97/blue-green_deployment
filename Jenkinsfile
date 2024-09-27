@@ -164,7 +164,7 @@ pipeline {
                                 fi
                             '''
                             sh 'docker build -t ${AWS_ECR_FRONTEND_REPO_NAME}:${TAG} .'
-                            sh 'docker tag "${AWS_ECR_FRONTEND_REPO_NAME}:${TAG}" "${REPOSITORY_URI}${AWS_ECR_FRONTEND_REPO_NAME}:${TAG}"'
+                            sh 'docker tag ${AWS_ECR_FRONTEND_REPO_NAME}:${TAG} ${REPOSITORY_URI}${AWS_ECR_FRONTEND_REPO_NAME}:${TAG}'
                             sh 'aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${REPOSITORY_URI}'
                             sh 'docker push ${REPOSITORY_URI}${AWS_ECR_FRONTEND_REPO_NAME}:${TAG}'
                         }
