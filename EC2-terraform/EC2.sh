@@ -60,3 +60,8 @@ sudo apt install curl -y
 curl -LO https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl
 sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 kubectl version --client
+
+# JenkinsURL = "http://ec2-3-95-168-247.compute-1.amazonaws.com:8080"
+# SonarqubeURL = "http://ec2-3-95-168-247.compute-1.amazonaws.com:9000"
+
+# sudo cat /var/lib/jenkins/secrets/initialAdminPassword
