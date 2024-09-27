@@ -68,23 +68,26 @@ pipeline {
             }
         }
    
-        stage('Frontend Quality Check') {
-            steps {
-                script {
-                    // Assuming frontend project is configured in SonarQube with a different project key
-                    withSonarQubeEnv('sonar-server') { // Use your SonarQube server configuration here
-                        waitForQualityGate abortPipeline: true, credentialsId: 'sonar-token'
+        stage('Quality Check') {
+            parallel {
+                stage('Frontend Quality Check') {
+                    steps {
+                        script {
+                            // Assuming frontend project is configured in SonarQube with a different project key
+                            withSonarQubeEnv('sonar-server') { // Use your SonarQube server configuration here
+                                waitForQualityGate abortPipeline: true, credentialsId: 'sonar-token'
+                            }
+                        }
                     }
                 }
-            }
-        }
-
-        stage('Backend Quality Check') {
-            steps {
-                script {
-                    // Assuming backend project is configured in SonarQube with a different project key
-                    withSonarQubeEnv('sonar-server') { // Use your SonarQube server configuration here
-                        waitForQualityGate abortPipeline: true, credentialsId: 'sonar-token'
+                stage('Backend Quality Check') {
+                    steps {
+                        script {
+                            // Assuming backend project is configured in SonarQube with a different project key
+                            withSonarQubeEnv('sonar-server') { // Use your SonarQube server configuration here
+                                waitForQualityGate abortPipeline: true, credentialsId: 'sonar-token'
+                            }
+                        }
                     }
                 }
             }
