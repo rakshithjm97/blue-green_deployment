@@ -4,7 +4,7 @@ metadata:
   name: frontend-green
   namespace: webapps
   labels:
-    role: frontend
+    app: frontend
     version: green
 spec: 
   replicas: 2
@@ -15,10 +15,12 @@ spec:
       maxUnavailable: 25%
   selector:
     matchLabels: 
+      app: frontend
       version: green
   template:
     metadata:
       labels:
+        app: frontend
         version: green
     spec: 
       serviceAccountName: jenkins
