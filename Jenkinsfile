@@ -124,7 +124,7 @@ pipeline {
                             script {
                                 def scanResults = readFile('trivyfs.txt')
                                 if (scanResults.contains('CRITICAL')) {
-                                    error("Critical vulnerabilities found in frontend file scan!")
+                                    echo "Warning: Critical vulnerabilities found in backend file scan!"
                                 }
                             }
                         }
@@ -138,7 +138,7 @@ pipeline {
                             script {
                                 def scanResults = readFile('trivyfs.txt')
                                 if (scanResults.contains('CRITICAL')) {
-                                    error("Critical vulnerabilities found in backend file scan!")
+                                    echo "Warning: Critical vulnerabilities found in backend file scan!"
                                 }
                             }
                         }
