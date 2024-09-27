@@ -34,4 +34,4 @@ spec:
           - name: REACT_APP_BACKEND_URL
             value: "http://amanpathakdevops.study/api/tasks"
         ports:
-        - containerPort: 80
+        - containerPort: 3000
