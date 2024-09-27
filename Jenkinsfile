@@ -69,7 +69,7 @@ pipeline {
         }
 
         stage('Quality Check') {
-            parallel {
+            
                 stage('Frontend Quality Check') {
                     steps {
                         script {
@@ -90,7 +90,7 @@ pipeline {
                         }
                     }
                 }
-            }
+            
         }
 
         stage('Dependency Scans') {
