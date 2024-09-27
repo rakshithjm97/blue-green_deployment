@@ -9,4 +9,5 @@ spec:
     protocol: TCP
   type: LoadBalancer
   selector:
+    app: frontend
     version: blue  # This can be change to "green" when switching traffic
