@@ -152,8 +152,6 @@ pipeline {
                 stage("Build Tag and Push Frontend Docker Image") {
                     steps {
                         dir('Application-Code/frontend') {
-                            sh 'echo "Repository URI: ${REPOSITORY_URI}"'
-                            sh 'echo "Frontend Repo Name: ${AWS_ECR_FRONTEND_REPO_NAME}"'
                             // Conditional Docker pruning
                             sh '''
                                 USED_DISK_SPACE=$(df / | tail -1 | awk \'{print $5}\' | sed \'s/%//\')
@@ -176,8 +174,6 @@ pipeline {
                 stage("Build Tag and Push Backend Docker Image") {
                     steps {
                         dir('Application-Code/backend') {
-                            sh 'echo "Backend Repo Name: ${AWS_ECR_BACKEND_REPO_NAME}"'
-                            sh 'echo "Tag: ${TAG}"'
                             sh 'docker build -t ${AWS_ECR_BACKEND_REPO_NAME}:${TAG} .'
                             sh 'docker tag ${AWS_ECR_BACKEND_REPO_NAME}:${TAG} ${REPOSITORY_URI}${AWS_ECR_BACKEND_REPO_NAME}:${TAG}'
                             sh 'aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${REPOSITORY_URI}'
