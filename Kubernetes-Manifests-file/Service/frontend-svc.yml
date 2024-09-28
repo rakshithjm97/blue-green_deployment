@@ -5,8 +5,8 @@ metadata:
   namespace: webapps
 spec:
   ports:
-  - port: 80
-    targetPort: 80  # Target the container's port
+  - port: 3000
+    targetPort: 3000  # Target the container's port
     protocol: TCP
   type: LoadBalancer
   selector:
