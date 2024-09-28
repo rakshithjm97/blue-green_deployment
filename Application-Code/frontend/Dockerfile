@@ -13,18 +13,22 @@ WORKDIR /usr/src/app
 COPY package*.json ./
 RUN npm install
 COPY . .
-RUN npm run build  
+RUN npm run build
 
 # Stage 2: Production stage
 FROM nginx:alpine  
+
 # Create a non-root user
 RUN addgroup -S nonroot && adduser -S nonroot -G nonroot
 
 # Copy the production build from the previous stage
 COPY --from=build /usr/src/app/build /usr/share/nginx/html
 
+# Copy the custom nginx configuration file from the build context
+COPY ./nginx.conf /etc/nginx/nginx.conf
+
 # Change ownership of the NGINX directories to nonroot
-RUN chown -R nonroot:nonroot /usr/share/nginx/html /var/cache/nginx /var/run
+RUN chown -R nonroot:nonroot /usr/share/nginx/html /var/cache/nginx /var/run /etc/nginx/nginx.conf
 
 # Use the non-root user
 USER nonroot
