@@ -7,12 +7,14 @@
 # CMD [ "npm", "start" ]
 
 
-FROM node:14
+FROM node:14 AS build
 WORKDIR /usr/src/app
 COPY package*.json ./
 RUN npm install
 COPY . .
-RUN npm run build
-RUN npm install -g serve
-EXPOSE 3000
-CMD ["serve", "-s", "build"]
+RUN npm run build  
+
+FROM nginx:alpine  
+COPY --from=build /usr/src/app/build /usr/share/nginx/html
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
