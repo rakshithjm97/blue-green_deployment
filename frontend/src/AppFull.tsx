@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Home, Send, TrendingUp, Database, Users, LogOut, Layers, Activity, X, AlertCircle } from 'lucide-react';
+import { X, AlertCircle } from 'lucide-react';
 import ViewContainer from './components/ViewContainer';
-import SidebarItem from './components/SidebarItem';
+import Sidebar from './components/Sidebar';
+import SearchableSelect from './components/SearchableSelect';
 import { fetchWithAuth } from './utils/api';
 import Dashboard from './pages/Dashboard';
 import Tracker from './pages/Tracker';
@@ -62,7 +63,7 @@ export const App: React.FC = () => {
   });
   
   const [authToken, setAuthToken] = useState<string | null>(() => typeof window !== 'undefined' ? localStorage.getItem('access_token') : null);
-  const [currentView, setCurrentView] = useState<'home' | 'tracker' | 'performance' | 'resourcePlanning' | 'users' | 'teamReport' | 'oldData'>('home');
+  const [currentView, setCurrentView] = useState<'home' | 'tracker' | 'performance' | 'resourcePlanner' | 'teamControl' | 'teamReport' | 'oldData'>('home');
   
   const [loading, setLoading] = useState(false);
   const [submitError, setSubmitError] = useState('');
@@ -95,11 +96,39 @@ export const App: React.FC = () => {
   const [editingItem, setEditingItem] = useState<any>(null);
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState('');
+  const [filterOptions, setFilterOptions] = useState<any>({
+    products: [],
+    projectNames: [],
+    tasks: [],
+    natureOfWork: [],
+    podNames: []
+  });
   
   const [dateFilter, setDateFilter] = useState({
     startDate: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0]
   });
+  
+  useEffect(() => {
+    const fetchFilters = async () => {
+      try {
+        const res = await fetchWithAuth('/api/daily_activity/filters');
+        if (res.ok) {
+          const data = await res.json();
+          setFilterOptions({
+            products: data.products || [],
+            projectNames: data.projectNames || [],
+            tasks: data.tasks || [],
+            natureOfWork: data.natureOfWork || [],
+            podNames: data.podNames || []
+          });
+        }
+      } catch (err) {
+        console.error('Error fetching filters:', err);
+      }
+    };
+    fetchFilters();
+  }, []);
   
   const openEditModal = (it: any) => { setEditingItem({ ...it }); setEditError(''); setEditModalOpen(true); };
   const closeEditModal = () => { setEditModalOpen(false); setEditingItem(null); setEditError(''); };
@@ -267,10 +296,7 @@ export const App: React.FC = () => {
         const json = await res.json();
         const rows: any[] = Array.isArray(json.data) ? json.data : [];
 
-        const now = new Date();
-        const start = new Date();
-        start.setDate(now.getDate() - 6); // last 7 days (including today)
-        start.setHours(0,0,0,0);
+        // reuse `now`/`start` computed above for date range check
 
         const total = rows.reduce((acc, r) => {
           try {
@@ -400,32 +426,12 @@ export const App: React.FC = () => {
   
   return (
     <div className="min-h-screen bg-[#fafbfc] flex text-gray-900 font-sans">
-      {/* Sidebar */}
-      <aside className="w-72 border-r border-gray-100 fixed inset-y-0 left-0 bg-white z-20 flex flex-col p-8">
-        <div className="flex items-center gap-4 mb-8">
-          <div className="w-11 h-11 rounded-[14px] bg-gradient-to-br from-purple-700 to-pink-600 flex items-center justify-center text-white font-black">C</div>
-          <div>
-            <span className="font-black text-2xl">CORE.</span>
-            <div className="text-xs text-gray-400">Restricted Access</div>
-          </div>
-        </div>
-        
-        <div className="space-y-2 flex-1">
-          <SidebarItem icon={Home} label="Terminal Home" onClick={() => setCurrentView('home')} active={currentView === 'home'} />
-          <SidebarItem icon={Send} label="Activity Logger" onClick={() => setCurrentView('tracker')} active={currentView === 'tracker'} />
-          <SidebarItem icon={Activity} label="Metrics" onClick={() => setCurrentView('performance')} active={currentView === 'performance'} />
-          <SidebarItem icon={Database} label="Old Data" onClick={() => setCurrentView('oldData')} active={currentView === 'oldData'} />
-          <SidebarItem icon={Layers} label="Resource Planner" onClick={() => setCurrentView('resourcePlanning')} active={currentView === 'resourcePlanning'} />
-          {currentUser.role === 'Admin' && <SidebarItem icon={Users} label="Users" onClick={() => setCurrentView('users')} active={currentView === 'users'} />}
-          <SidebarItem icon={TrendingUp} label="Team Report" onClick={() => setCurrentView('teamReport')} active={currentView === 'teamReport'} />
-        </div>
-        
-        <div className="border-t border-gray-50 pt-6">
-          <button onClick={() => { setCurrentUser(null); localStorage.removeItem('access_token'); }} className="w-full flex items-center justify-center gap-2 text-red-500 hover:bg-red-50 px-4 py-3 rounded-xl font-black text-xs">
-            <LogOut size={16} /> END SESSION
-          </button>
-        </div>
-      </aside>
+      <Sidebar 
+        currentUser={currentUser} 
+        currentView={currentView} 
+        setCurrentView={setCurrentView}
+        onLogout={() => { setCurrentUser(null); localStorage.removeItem('access_token'); }}
+      />
       
       {/* Main Content */}
       <main className="flex-1 ml-72 min-h-screen">
@@ -435,8 +441,8 @@ export const App: React.FC = () => {
             {currentView === 'tracker' && <Tracker currentUser={currentUser} />}
             {currentView === 'performance' && <Performance currentUser={currentUser} />}
             {currentView === 'oldData' && <OldData currentUser={currentUser} onEdit={openEditModal} />}
-            {currentView === 'resourcePlanning' && <ResourcePlanner currentUser={currentUser} />}
-            {currentView === 'users' && <TeamControl currentUser={currentUser} />}
+            {currentView === 'resourcePlanner' && <ResourcePlanner currentUser={currentUser} />}
+            {currentView === 'teamControl' && <TeamControl currentUser={currentUser} />}
             {currentView === 'teamReport' && <TeamReport currentUser={currentUser} />}
           </ViewContainer>
         </div>
@@ -445,7 +451,7 @@ export const App: React.FC = () => {
       {/* Edit Modal */}
       {editModalOpen && editingItem && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl p-8 max-w-md w-full mx-4 shadow-2xl">
+          <div className="bg-white rounded-2xl p-8 max-w-2xl w-full mx-4 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-xl font-black">Edit Entry</h3>
               <button onClick={closeEditModal} className="text-gray-500 hover:text-gray-700"><X size={24} /></button>
@@ -454,17 +460,84 @@ export const App: React.FC = () => {
             {editError && <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm">{editError}</div>}
             
             <form onSubmit={handleSaveEdit} className="space-y-4">
-              <div>
-                <label className="text-xs font-black text-gray-500 block mb-2">Project Name</label>
-                <input value={editingItem.projectName || ''} onChange={e => setEditingItem({...editingItem, projectName: e.target.value})} className="w-full px-4 py-3 rounded-lg border" />
+              <div className="grid grid-cols-2 gap-4">
+                {/* POD Name */}
+                <SearchableSelect 
+                  label="POD Name"
+                  options={filterOptions.podNames}
+                  value={editingItem.podName || ''}
+                  onChange={(val) => setEditingItem({...editingItem, podName: val})}
+                  placeholder="Select POD"
+                />
+
+                {/* Mode of Functioning */}
+                <div>
+                  <label className="text-xs font-black text-gray-500 block mb-2">Mode of Functioning</label>
+                  <input 
+                    value={editingItem.modeOfFunctioning || ''} 
+                    onChange={e => setEditingItem({...editingItem, modeOfFunctioning: e.target.value})} 
+                    className="w-full px-4 py-3 rounded-lg border" 
+                    placeholder="WFO/WFH/Hybrid"
+                  />
+                </div>
+
+                {/* Product */}
+                <SearchableSelect 
+                  label="Product"
+                  options={filterOptions.products}
+                  value={editingItem.product || ''}
+                  onChange={(val) => setEditingItem({...editingItem, product: val})}
+                  placeholder="Select Product"
+                />
+
+                {/* Project Name */}
+                <SearchableSelect 
+                  label="Project Name"
+                  options={filterOptions.projectNames}
+                  value={editingItem.projectName || ''}
+                  onChange={(val) => setEditingItem({...editingItem, projectName: val})}
+                  placeholder="Select Project"
+                />
+
+                {/* Nature of Work */}
+                <SearchableSelect 
+                  label="Nature of Work"
+                  options={filterOptions.natureOfWork}
+                  value={editingItem.natureOfWork || ''}
+                  onChange={(val) => setEditingItem({...editingItem, natureOfWork: val})}
+                  placeholder="Select Nature"
+                />
+
+                {/* Task */}
+                <SearchableSelect 
+                  label="Task"
+                  options={filterOptions.tasks}
+                  value={editingItem.task || ''}
+                  onChange={(val) => setEditingItem({...editingItem, task: val})}
+                  placeholder="Select Task"
+                />
+
+                {/* Hours */}
+                <div>
+                  <label className="text-xs font-black text-gray-500 block mb-2">Hours</label>
+                  <input 
+                    type="number" 
+                    step="0.5"
+                    value={editingItem.dedicatedHours || ''} 
+                    onChange={e => setEditingItem({...editingItem, dedicatedHours: parseFloat(e.target.value)})} 
+                    className="w-full px-4 py-3 rounded-lg border" 
+                  />
+                </div>
               </div>
-              <div>
-                <label className="text-xs font-black text-gray-500 block mb-2">Hours</label>
-                <input type="number" value={editingItem.dedicatedHours || ''} onChange={e => setEditingItem({...editingItem, dedicatedHours: parseFloat(e.target.value)})} className="w-full px-4 py-3 rounded-lg border" />
-              </div>
+
+              {/* Remarks - Full Width */}
               <div>
                 <label className="text-xs font-black text-gray-500 block mb-2">Remarks</label>
-                <textarea value={editingItem.remarks || ''} onChange={e => setEditingItem({...editingItem, remarks: e.target.value})} className="w-full px-4 py-3 rounded-lg border h-24" />
+                <textarea 
+                  value={editingItem.remarks || ''} 
+                  onChange={e => setEditingItem({...editingItem, remarks: e.target.value})} 
+                  className="w-full px-4 py-3 rounded-lg border h-24" 
+                />
               </div>
               
               <div className="flex gap-2 pt-4">

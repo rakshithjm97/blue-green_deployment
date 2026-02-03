@@ -8,16 +8,35 @@ export const SearchableSelect: React.FC<any> = ({ options = [], value = '', onCh
   const [open, setOpen] = useState(false);
   const [term, setTerm] = useState('');
   const ref = useRef<HTMLDivElement | null>(null);
+  const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0, width: 0 });
 
   useEffect(() => {
     const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
     document.addEventListener('mousedown', h); return () => document.removeEventListener('mousedown', h);
   }, []);
 
-  const filtered = useMemo(() => options.filter((o: string) => o.toLowerCase().includes((term || '').toLowerCase())), [options, term]);
+  useEffect(() => {
+    if (open && ref.current) {
+      const rect = ref.current.getBoundingClientRect();
+      setDropdownPos({
+        top: rect.bottom + window.scrollY,
+        left: rect.left + window.scrollX,
+        width: rect.width
+      });
+    }
+  }, [open]);
+
+  const filtered = useMemo(() => {
+    let results = options.filter((o: string) => o.toLowerCase().includes((term || '').toLowerCase()));
+    // Always include the current value at the top if it exists and isn't already in results
+    if (value && !results.includes(value)) {
+      results = [value, ...results];
+    }
+    return results;
+  }, [options, term, value]);
 
   return (
-    <div className="relative group" ref={ref}>
+    <div className="relative" ref={ref}>
       {label && <label className={MODERN_LABEL}>{label}</label>}
       <div className="relative">
         <input
@@ -34,13 +53,21 @@ export const SearchableSelect: React.FC<any> = ({ options = [], value = '', onCh
       </div>
 
       {open && (
-        <div className="absolute z-50 w-full mt-2 bg-white border rounded-2xl shadow max-h-60 overflow-y-auto">
+        <div 
+          style={{
+            position: 'fixed',
+            top: `${dropdownPos.top}px`,
+            left: `${dropdownPos.left}px`,
+            width: `${dropdownPos.width}px`,
+          }}
+          className="z-[9999] mt-2 bg-white border rounded-2xl shadow max-h-60 overflow-y-auto"
+        >
           {filtered.length ? filtered.map((opt: string, i: number) => (
-            <div key={i} className={`px-5 py-3 flex justify-between items-center cursor-pointer hover:bg-gray-50 ${opt === value ? 'text-purple-600' : 'text-gray-700'}`} onClick={() => { onChange(opt); setOpen(false); }}>
+            <div key={i} className={`px-5 py-3 flex justify-between items-center cursor-pointer hover:bg-gray-50 ${opt === value ? 'text-purple-600 font-bold' : 'text-gray-700'}`} onClick={() => { onChange(opt); setOpen(false); }}>
               <span>{opt}</span>
               {opt === value && <CheckCircle2 size={14} />}
             </div>
-          )) : <div className="px-5 py-4 text-xs text-gray-400 text-center">No results</div>}
+          )) : <div className="px-5 py-4 text-xs text-gray-400 text-center">Type to search...</div>}
         </div>
       )}
     </div>

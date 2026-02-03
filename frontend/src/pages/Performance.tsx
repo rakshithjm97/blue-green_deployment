@@ -12,6 +12,8 @@ const Performance: React.FC<any> = ({ currentUser }) => {
     activitiesCount: 0,
     avgHoursPerDay: 0,
   });
+  const [users, setUsers] = useState<Array<{id:string,email:string,name:string,role:string}>>([]);
+  const [selectedEmail, setSelectedEmail] = useState<string>('');
 
   const fetchData = async () => {
     setLoading(true);
@@ -20,15 +22,58 @@ const Performance: React.FC<any> = ({ currentUser }) => {
       if (startDate) params.append('start_date', startDate);
       if (endDate) params.append('end_date', endDate);
       
+      // Always include role so the backend knows the requester role
+      if (currentUser?.role) params.append('role', currentUser.role);
+
+      // Append email param when appropriate:
+      // - If selectedEmail is set, use it (Admin/Manager inspection)
+      // - If current user is a regular User, force their email
+      if (selectedEmail) {
+        params.append('email', selectedEmail);
+      } else if ((currentUser?.role || 'User') === 'User' && currentUser?.email) {
+        params.append('email', currentUser.email);
+      }
+
       const res = await fetchWithAuth(`/api/performance?${params.toString()}`);
       if (!res.ok) throw new Error('Failed to fetch');
       
       const result = await res.json();
-      setData(result.data || []);
+      const all: PerfRecord[] = Array.isArray(result.data) ? result.data : [];
+      // Apply client-side restriction only for plain Users; Admin/Manager may inspect all or a selected user
+      let filtered: PerfRecord[] = all;
+      if (currentUser) {
+        const role = currentUser.role || 'User';
+        if (role === 'User') {
+          filtered = all.filter(r => (r.email || '').toLowerCase() === (currentUser.email || '').toLowerCase());
+        } else if (selectedEmail) {
+          filtered = all.filter(r => (r.email || '').toLowerCase() === (selectedEmail || '').toLowerCase());
+        }
+      }
+
+      // compute stats from filtered data
+      const total = filtered.reduce((acc, r) => {
+        const h = parseFloat((r.hours as any) || (r.dedicatedHours as any) || 0) || 0;
+        return acc + h;
+      }, 0);
+
+      // avg hours per day: compute by days range when provided
+      let avg = 0;
+      if (startDate && endDate) {
+        try {
+          const s = new Date(startDate);
+          const e = new Date(endDate);
+          const days = Math.max(1, Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+          avg = total / days;
+        } catch (e) { avg = total; }
+      } else {
+        avg = total;
+      }
+
+      setData(filtered);
       setStats({
-        totalHours: result.totalHours || 0,
-        activitiesCount: result.count || 0,
-        avgHoursPerDay: result.avgHoursPerDay || 0,
+        totalHours: Math.round(total * 10) / 10,
+        activitiesCount: filtered.length,
+        avgHoursPerDay: Math.round(avg * 10) / 10,
       });
     } catch (err) {
       console.error(err);
@@ -40,13 +85,42 @@ const Performance: React.FC<any> = ({ currentUser }) => {
 
   useEffect(() => {
     if (currentUser) fetchData();
-  }, [startDate, endDate, currentUser]);
+  }, [startDate, endDate, currentUser, selectedEmail]);
+
+  // Fetch users list for Admins / Managers to inspect
+  useEffect(() => {
+    const loadUsers = async () => {
+      try {
+        if (!currentUser) return;
+        const role = currentUser.role || 'User';
+        if (!['Admin', 'Manager', 'Team Lead'].includes(role)) return;
+        const res = await fetchWithAuth('/api/users');
+        if (!res.ok) return;
+        const j = await res.json();
+        if (j.status === 'success' && Array.isArray(j.data)) setUsers(j.data);
+      } catch (e) {
+        console.error('Failed to load users', e);
+      }
+    };
+    loadUsers();
+  }, [currentUser]);
 
   return (
     <div>
       <h2 className="text-2xl font-black mb-6">Performance Report</h2>
       
       <div className="mb-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {['Admin','Manager','Team Lead'].includes(currentUser?.role) && (
+          <div>
+            <label className="text-[11px] font-black text-gray-500">User</label>
+            <select value={selectedEmail} onChange={e=>setSelectedEmail(e.target.value)} className="w-full px-4 py-3 rounded-lg border">
+              <option value="">All / Select User</option>
+              {users.map(u=> (
+                <option key={u.id} value={u.email}>{u.name} — {u.email}</option>
+              ))}
+            </select>
+          </div>
+        )}
         <div>
           <label className="text-[11px] font-black text-gray-500">Start Date</label>
           <input 
