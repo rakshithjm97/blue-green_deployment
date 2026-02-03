@@ -13,18 +13,45 @@ export const API_BASE = getApiBase();
 
 export const fetchWithAuth = async (path: string, init?: RequestInit) => {
   const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
-  const headers = { ...(init?.headers as any || {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) };
-  const res = await fetch((path.startsWith('http') ? path : `${API_BASE}${path}`), { ...(init || {}), headers });
-  if (res.status === 401) {
-    // Token expired or unauthorized - clear auth and reload to show login
+  const baseHeaders = { ...(init?.headers as any || {}) };
+  if (token) baseHeaders.Authorization = `Bearer ${token}`;
+
+  const fullUrl = path.startsWith('http') ? path : `${API_BASE}${path}`;
+  let res = await fetch(fullUrl, { ...(init || {}), headers: baseHeaders });
+
+  if (res.status !== 401) return res;
+
+  // Try silent refresh using stored refresh token
+  const refreshToken = typeof window !== 'undefined' ? localStorage.getItem('refresh_token') : null;
+  if (refreshToken) {
     try {
-      localStorage.removeItem('access_token');
-      localStorage.removeItem('current_user');
-    } catch (e) {}
-    // Reload the app so top-level component shows login view
-    if (typeof window !== 'undefined') {
-      window.location.reload();
+      const r = await fetch(`${API_BASE}/api/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${refreshToken}` },
+        body: JSON.stringify({}),
+      });
+      if (r.ok) {
+        const j = await r.json();
+        const newAccess = j.access_token;
+        if (newAccess) {
+          try { localStorage.setItem('access_token', newAccess); } catch (e) {}
+          // retry original request with new token
+          const retryHeaders = { ...(init?.headers as any || {}), Authorization: `Bearer ${newAccess}` };
+          const retryRes = await fetch(fullUrl, { ...(init || {}), headers: retryHeaders });
+          return retryRes;
+        }
+      }
+    } catch (e) {
+      // fallthrough to clearing auth
     }
   }
+
+  // Refresh failed or no refresh token - clear and reload
+  try {
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
+    localStorage.removeItem('current_user');
+  } catch (e) {}
+  if (typeof window !== 'undefined') window.location.reload();
   return res;
 };

@@ -14,6 +14,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import (
     JWTManager,
     create_access_token,
+    create_refresh_token,
+    decode_token,
     jwt_required,
     get_jwt_identity,
     get_jwt,
@@ -411,13 +413,48 @@ def login():
         identity=user.email,
         additional_claims={"role": user.role, "id": user.id},
     )
+    refresh_token = create_refresh_token(identity=user.email)
     return jsonify(
         {
             "status": "success",
             "access_token": access_token,
+            "refresh_token": refresh_token,
             "user": {"id": user.id, "email": user.email, "name": user.name, "role": user.role},
         }
     ), 200
+
+
+@app.route("/api/refresh", methods=["POST"])
+def refresh_token_route():
+    """Accepts a refresh token (in JSON body or Authorization header) and returns a new access token."""
+    initialize_rds()
+    token = None
+    auth = request.headers.get("Authorization", "")
+    if auth and auth.startswith("Bearer "):
+        token = auth.split(" ", 1)[1].strip()
+    else:
+        data = request.json or {}
+        token = data.get("refresh_token")
+
+    if not token:
+        return jsonify({"status": "error", "message": "Refresh token required"}), 401
+
+    try:
+        decoded = decode_token(token)
+        identity = decoded.get("sub") or decoded.get("identity")
+        if not identity:
+            return jsonify({"status": "error", "message": "Invalid refresh token"}), 401
+
+        user = User.query.filter_by(email=identity).first()
+        if not user:
+            return jsonify({"status": "error", "message": "User not found"}), 401
+
+        new_access = create_access_token(identity=identity, additional_claims={"role": user.role, "id": user.id})
+        return jsonify({"status": "success", "access_token": new_access}), 200
+
+    except Exception as e:
+        logger.warning(f"Refresh token decode failed: {e}")
+        return jsonify({"status": "error", "message": "Invalid refresh token"}), 401
 
 # -----------------------
 # Forgot / Reset Password
