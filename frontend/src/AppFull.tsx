@@ -251,7 +251,18 @@ export const App: React.FC = () => {
     const load = async () => {
       setWeeklyLoading(true);
       try {
-        const res = await fetchWithAuth('/api/daily_activity');
+        // compute start/end for last 7 days (YYYY-MM-DD)
+        const now = new Date();
+        const start = new Date();
+        start.setDate(now.getDate() - 6);
+        start.setHours(0,0,0,0);
+        const end = new Date();
+        end.setHours(23,59,59,999);
+
+        const startISO = start.toISOString().split('T')[0];
+        const endISO = end.toISOString().split('T')[0];
+
+        const res = await fetchWithAuth(`/api/daily_activity?start_date=${startISO}&end_date=${endISO}`);
         if (!res.ok) throw new Error('Failed to fetch activities');
         const json = await res.json();
         const rows: any[] = Array.isArray(json.data) ? json.data : [];

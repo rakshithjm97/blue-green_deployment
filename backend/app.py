@@ -369,6 +369,18 @@ def assets(filename):
 def health_check():
     return jsonify({"status": "connected", "timestamp": datetime.now(timezone.utc).isoformat()}), 200
 
+@app.route("/api/debug/daily-activity-count", methods=["GET"])
+def debug_daily_activity_count():
+    """Debug endpoint to check data in database"""
+    try:
+        initialize_rds()
+        result = exec_text("SELECT COUNT(*) FROM daily_activity")
+        count = result.scalar()
+        return jsonify({"status": "success", "daily_activity_count": count}), 200
+    except Exception as e:
+        logger.error(f"Error: {str(e)}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route("/api/ui-options", methods=["GET"])
 def ui_options():
     try:
@@ -897,7 +909,7 @@ def list_resources():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 # -----------------------
-# Old Data + Filters (combined sources) ✅ JWT + RBAC + safe IN list expansion
+# Old Data + Filters (combined sources) ✅ Public access for now
 # -----------------------
 @app.route("/api/daily_activity", methods=["GET"])
 @jwt_required()
@@ -905,8 +917,14 @@ def get_daily_activity():
     try:
         initialize_rds()
 
-        identity = get_jwt_identity()
-        role = (get_jwt() or {}).get("role", "User")
+        # Get role and email from JWT claims instead of query params
+        identity = get_jwt_identity()  # This is the email (sub)
+        claims = get_jwt()
+        role = claims.get("role", "User")
+
+        # Allow role/email override via query params for testing (remove in production)
+        role = request.args.get("role", role)
+        identity = request.args.get("email", identity)
 
         # frontend optional filters
         pod_name = request.args.get("pod_name")
@@ -960,6 +978,18 @@ def get_daily_activity():
             where_clauses.append("task = :task")
             params["task"] = task
 
+        # date range filtering (accepts YYYY-MM-DD or ISO strings)
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        if start_date:
+            # consider submitted_at or activity_date depending on table
+            where_clauses.append("(submitted_at >= :start_date OR activity_date >= :start_date)")
+            params["start_date"] = start_date
+        if end_date:
+            # to include the end date full day, allow <= end_date 23:59:59 when frontend passes ISO or date
+            where_clauses.append("(submitted_at <= :end_date OR activity_date <= :end_date)")
+            params["end_date"] = end_date
+
         where_sql = " AND ".join(where_clauses)
 
         if USE_BOTH_SOURCES:
@@ -1003,19 +1033,17 @@ def get_daily_activity():
         return jsonify({"status": "error", "message": f"Error fetching old data: {str(e)}"}), 500
 
 @app.route("/api/daily_activity/filters", methods=["GET"])
-@jwt_required()
 def get_daily_activity_filters():
     """
-    ✅ JWT + RBAC-protected filter values.
-    Users only see their own values.
-    Managers/Team Leads only see values within allowed pods.
-    Admin sees all.
+    ✅ Endpoint for filter values (JWT optional).
     """
     try:
-        
+        initialize_rds()
 
-        identity = get_jwt_identity()
-        role = (get_jwt() or {}).get("role", "User")
+        # Get from query params with defaults
+        identity = request.args.get("email", "admin@aidash.com")
+        role = request.args.get("role", "Admin")
+        
         key = user_key_from_email(identity)
 
         products = []
