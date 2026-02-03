@@ -237,8 +237,58 @@ export const App: React.FC = () => {
   
   // Page components manage their own submissions, users, and performance calculations.
 
-  // Dashboard metrics - provide safe defaults so the app won't crash
-  const weeklyHours = 0;
+  // Dashboard metrics - compute weekly hours by fetching last 7 days of activities
+  const [weeklyHours, setWeeklyHours] = useState<number>(0);
+  const [weeklyLoading, setWeeklyLoading] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!currentUser) {
+      setWeeklyHours(0);
+      return;
+    }
+
+    let cancelled = false;
+    const load = async () => {
+      setWeeklyLoading(true);
+      try {
+        const res = await fetchWithAuth('/api/daily_activity');
+        if (!res.ok) throw new Error('Failed to fetch activities');
+        const json = await res.json();
+        const rows: any[] = Array.isArray(json.data) ? json.data : [];
+
+        const now = new Date();
+        const start = new Date();
+        start.setDate(now.getDate() - 6); // last 7 days (including today)
+        start.setHours(0,0,0,0);
+
+        const total = rows.reduce((acc, r) => {
+          try {
+            const dateStr = r.submittedAt || r.activityDate || r.date;
+            if (!dateStr) return acc;
+            const d = new Date(dateStr);
+            if (isNaN(d.getTime())) return acc;
+            if (d >= start && d <= now) {
+              const h = parseFloat(r.dedicatedHours) || 0;
+              return acc + h;
+            }
+          } catch (e) {
+            return acc;
+          }
+          return acc;
+        }, 0 as number);
+
+        if (!cancelled) setWeeklyHours(Math.round(total * 100) / 100);
+      } catch (e) {
+        if (!cancelled) setWeeklyHours(0);
+      } finally {
+        if (!cancelled) setWeeklyLoading(false);
+      }
+    };
+
+    load();
+    return () => { cancelled = true; };
+  }, [currentUser, authToken]);
+
   const remainingHours = Math.max(0, 40 - weeklyHours);
   const weeklyProgressPercent = weeklyHours > 0 ? Math.min(100, Math.round((weeklyHours / 40) * 100)) : 0;
   
