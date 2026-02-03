@@ -14,5 +14,17 @@ export const API_BASE = getApiBase();
 export const fetchWithAuth = async (path: string, init?: RequestInit) => {
   const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
   const headers = { ...(init?.headers as any || {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) };
-  return fetch((path.startsWith('http') ? path : `${API_BASE}${path}`), { ...(init || {}), headers });
+  const res = await fetch((path.startsWith('http') ? path : `${API_BASE}${path}`), { ...(init || {}), headers });
+  if (res.status === 401) {
+    // Token expired or unauthorized - clear auth and reload to show login
+    try {
+      localStorage.removeItem('access_token');
+      localStorage.removeItem('current_user');
+    } catch (e) {}
+    // Reload the app so top-level component shows login view
+    if (typeof window !== 'undefined') {
+      window.location.reload();
+    }
+  }
+  return res;
 };
