@@ -8,12 +8,13 @@ import uuid
 import logging
 import secrets
 import hashlib
-from sqlalchemy import text, bindparam
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import (
     JWTManager,
     create_access_token,
+    create_refresh_token,
+    decode_token,
     jwt_required,
     get_jwt_identity,
     get_jwt,
@@ -75,11 +76,7 @@ RESET_TOKEN_MINUTES = int(os.environ.get("RESET_TOKEN_MINUTES", "30"))
 
 db = SQLAlchemy(app)
 
-# Use the real old-data source table name
-OLD_DATA_TABLE = "daily_activity"
-
-# Control whether to query both sources or only the old_data_table
-USE_BOTH_SOURCES = os.environ.get("USE_BOTH_SOURCES", "true").lower() in ("1", "true", "yes")
+# All data consolidated into single database
 
 # -----------------------
 # Helpers
@@ -114,31 +111,9 @@ TEAM_ACCESS = {
 
 def user_key_from_email(email: str) -> str:
     """
-    If you switch TEAM_ACCESS keys to full emails,
-    change this to: return (email or "").strip().lower()
+    Extract user key from email (before @ symbol).
     """
     return (email or "").split("@")[0].strip().lower()
-
-
-
-from sqlalchemy import text, bindparam
-
-def exec_text(sql: str, params: dict | None = None):
-    """
-    Execute raw SQL safely using Flask-SQLAlchemy session.
-    Fixes: NameError: engine is not defined
-    Also supports IN (...) lists via expanding bindparam.
-    """
-    params = params or {}
-
-    stmt = text(sql)
-
-    # ✅ Important for: pod_name IN :allowed_pods
-    for k, v in params.items():
-        if isinstance(v, (list, tuple, set)):
-            stmt = stmt.bindparams(bindparam(k, expanding=True))
-
-    return db.session.execute(stmt, params)
 
 # -----------------------
 # Models
@@ -150,6 +125,7 @@ class User(db.Model):
     password = db.Column(db.String(255), nullable=False)  # hashed
     name = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(50), nullable=False)
+    pod_name = db.Column(db.String(100), nullable=True)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
 class PasswordResetToken(db.Model):
@@ -183,22 +159,22 @@ class DailyTracker(db.Model):
     number_of_points = db.Column(db.Numeric(10, 2), nullable=True)
 
     # IVMS specific fields
-    benchmark_for_task = db.Column(db.String(255), nullable=True)
+    benchmark_for_task = db.Column(db.Numeric(10, 2), nullable=True)
     line_miles = db.Column(db.Numeric(10, 2), nullable=True)
     line_miles_h1v1 = db.Column(db.Numeric(10, 2), nullable=True)
     dedicated_hours_h1v1 = db.Column(db.Numeric(10, 2), nullable=True)
     line_miles_h1v0 = db.Column(db.Numeric(10, 2), nullable=True)
     dedicated_hours_h1v0 = db.Column(db.Numeric(10, 2), nullable=True)
 
-    # Vendor POC specific fields
-    tracker_updating = db.Column(db.Boolean, nullable=True)
-    data_quality_checking = db.Column(db.Boolean, nullable=True)
-    training_feedback = db.Column(db.Boolean, nullable=True)
+    # Vendor POC specific fields (stored as NUMERIC: 0 or 1)
+    tracker_updating = db.Column(db.Numeric(10, 2), nullable=True)
+    data_quality_checking = db.Column(db.Numeric(10, 2), nullable=True)
+    training_feedback = db.Column(db.Numeric(10, 2), nullable=True)
     trn_remarks = db.Column(db.Text, nullable=True)
-    documentation = db.Column(db.Boolean, nullable=True)
+    documentation = db.Column(db.Numeric(10, 2), nullable=True)
     doc_remark = db.Column(db.Text, nullable=True)
     others_misc = db.Column(db.Text, nullable=True)
-    updated_in_prod_qc_tracker = db.Column(db.Boolean, nullable=True)
+    updated_in_prod_qc_tracker = db.Column(db.Numeric(10, 2), nullable=True)
 
     # ISMS specific fields
     site_name = db.Column(db.String(255), nullable=True)
@@ -215,7 +191,9 @@ class DailyTracker(db.Model):
     metadata_json = db.Column(db.Text, nullable=True)
     submitted_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
-class ResourcePlanning(db.Model):
+
+
+class ResourceTable(db.Model):
     __tablename__ = "resource_planning_table"
     id = db.Column(db.String(50), primary_key=True)
     email = db.Column(db.String(255), nullable=False)
@@ -228,79 +206,29 @@ class ResourcePlanning(db.Model):
     task = db.Column(db.String(255), nullable=True)
     submitted_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
-class OldData(db.Model):
+class DailyActivity(db.Model):
     __tablename__ = "daily_activity"
-
-    id = db.Column(db.Text, primary_key=True)
-
-    email = db.Column(db.Text, nullable=False)
-    name = db.Column(db.Text)
-
-    mode_of_functioning = db.Column(db.Text)
-    pod_name = db.Column(db.Text)
-    product = db.Column(db.Text)
-
-    project_name = db.Column(db.Text)
-    nature_of_work = db.Column(db.Text)
-    task = db.Column(db.Text)
-
-    dedicated_hours = db.Column(db.Float)
-    dedicated_hours_h1v1 = db.Column(db.Float)
-    dedicated_hours_h1v0 = db.Column(db.Float)
-
-    line_miles = db.Column(db.Float)
-    line_miles_h1v1 = db.Column(db.Text)
-    line_miles_h1v0 = db.Column(db.Text)
-
-    benchmark_for_task = db.Column(db.Text)
-    remarks = db.Column(db.Text)
-
-    activity_date = db.Column(db.DateTime)
-    submitted_at = db.Column(db.DateTime)
-    created_at = db.Column(db.Text)
-
-    less_worked_hours = db.Column(db.Text)
-
-class DailyActivityNew(db.Model):
-    __tablename__ = "daily_activity_new"
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    email = db.Column(db.String(255), nullable=False)
-    name = db.Column(db.String(150), nullable=True)
-    mode_of_functioning = db.Column(db.String(100), nullable=True)
-    pod_name = db.Column(db.String(100), nullable=True)
-
-    project_name = db.Column(db.String(255), nullable=True)
-    nature_of_work = db.Column(db.String(255), nullable=True)
-    task = db.Column(db.Text, nullable=True)
-
-    dedicated_hours = db.Column(db.Numeric(5, 2), nullable=True)
-    dedicated_hours_h1v1 = db.Column(db.Numeric(5, 2), nullable=True)
-    dedicated_hours_h1v0 = db.Column(db.Numeric(5, 2), nullable=True)
-
-    line_miles = db.Column(db.Numeric(10, 2), nullable=True)
-    line_miles_h1v1 = db.Column(db.Numeric(10, 2), nullable=True)
-    line_miles_h1v0 = db.Column(db.Numeric(10, 2), nullable=True)
-
-    benchmark_for_task = db.Column(db.String(255), nullable=True)
-    remarks = db.Column(db.Text, nullable=True)
-
-    activity_date = db.Column(db.Date, nullable=False)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-
-    __table_args__ = (db.UniqueConstraint("email", "activity_date", name="uix_email_activity_date"),)
-
-class ResourceTable(db.Model):
-    __tablename__ = "resource_table"
     id = db.Column(db.String(50), primary_key=True)
     email = db.Column(db.String(255), nullable=False)
-    date = db.Column(db.String(50), nullable=False)
-    pod_name = db.Column(db.String(100), nullable=True)
-    mode_of_functioning = db.Column(db.String(100), nullable=True)
-    product = db.Column(db.String(100), nullable=True)
-    project_name = db.Column(db.String(255), nullable=True)
-    nature_of_work = db.Column(db.String(255), nullable=True)
-    task = db.Column(db.String(255), nullable=True)
-    submitted_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    name = db.Column(db.Text, nullable=True)
+    mode_of_functioning = db.Column(db.Text, nullable=True)
+    pod_name = db.Column(db.Text, nullable=True)
+    product = db.Column(db.Text, nullable=True)
+    project_name = db.Column(db.Text, nullable=True)
+    nature_of_work = db.Column(db.Text, nullable=True)
+    task = db.Column(db.Text, nullable=True)
+    dedicated_hours = db.Column(db.Numeric(10, 2), nullable=True)
+    dedicated_hours_h1v1 = db.Column(db.Numeric(10, 2), nullable=True)
+    dedicated_hours_h1v0 = db.Column(db.Numeric(10, 2), nullable=True)
+    line_miles = db.Column(db.Numeric(10, 2), nullable=True)
+    line_miles_h1v1 = db.Column(db.Text, nullable=True)
+    line_miles_h1v0 = db.Column(db.Text, nullable=True)
+    benchmark_for_task = db.Column(db.Text, nullable=True)
+    remarks = db.Column(db.Text, nullable=True)
+    activity_date = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.Text, nullable=True)
+    less_worked_hours = db.Column(db.Text, nullable=True)
+
 
 # -----------------------
 # DB init
@@ -369,6 +297,17 @@ def assets(filename):
 def health_check():
     return jsonify({"status": "connected", "timestamp": datetime.now(timezone.utc).isoformat()}), 200
 
+@app.route("/api/debug/daily-activity-count", methods=["GET"])
+def debug_daily_activity_count():
+    """Debug endpoint to check data in database"""
+    try:
+        initialize_rds()
+        count = DailyTracker.query.count()
+        return jsonify({"status": "success", "daily_tracker_count": count}), 200
+    except Exception as e:
+        logger.error(f"Error: {str(e)}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route("/api/ui-options", methods=["GET"])
 def ui_options():
     try:
@@ -399,13 +338,48 @@ def login():
         identity=user.email,
         additional_claims={"role": user.role, "id": user.id},
     )
+    refresh_token = create_refresh_token(identity=user.email)
     return jsonify(
         {
             "status": "success",
             "access_token": access_token,
+            "refresh_token": refresh_token,
             "user": {"id": user.id, "email": user.email, "name": user.name, "role": user.role},
         }
     ), 200
+
+
+@app.route("/api/refresh", methods=["POST"])
+def refresh_token_route():
+    """Accepts a refresh token (in JSON body or Authorization header) and returns a new access token."""
+    initialize_rds()
+    token = None
+    auth = request.headers.get("Authorization", "")
+    if auth and auth.startswith("Bearer "):
+        token = auth.split(" ", 1)[1].strip()
+    else:
+        data = request.json or {}
+        token = data.get("refresh_token")
+
+    if not token:
+        return jsonify({"status": "error", "message": "Refresh token required"}), 401
+
+    try:
+        decoded = decode_token(token)
+        identity = decoded.get("sub") or decoded.get("identity")
+        if not identity:
+            return jsonify({"status": "error", "message": "Invalid refresh token"}), 401
+
+        user = User.query.filter_by(email=identity).first()
+        if not user:
+            return jsonify({"status": "error", "message": "User not found"}), 401
+
+        new_access = create_access_token(identity=identity, additional_claims={"role": user.role, "id": user.id})
+        return jsonify({"status": "success", "access_token": new_access}), 200
+
+    except Exception as e:
+        logger.warning(f"Refresh token decode failed: {e}")
+        return jsonify({"status": "error", "message": "Invalid refresh token"}), 401
 
 # -----------------------
 # Forgot / Reset Password
@@ -495,14 +469,27 @@ def reset_password():
 
 def get_users():
     initialize_rds()
-    if not require_admin():
-        return jsonify({"status": "error", "message": "Admin only"}), 403
+    # Allow Admins, Managers and Team Leads to list users (Admin gets full access)
+    identity = get_jwt_identity()
+    role = (get_jwt() or {}).get("role", "User")
 
-    users = User.query.order_by(User.created_at.desc()).all()
+    if role not in ("Admin", "Manager", "Team Lead"):
+        return jsonify({"status": "error", "message": "Admin/Manager only"}), 403
+
+    q = User.query
+    # Managers/Team Leads should only see users from their allowed PODs
+    if role in ("Manager", "Team Lead"):
+        key = user_key_from_email(identity)
+        allowed_pods = TEAM_ACCESS.get(role, {}).get(key, [])
+        if not allowed_pods:
+            return jsonify({"status": "success", "data": []}), 200
+        q = q.filter(User.pod_name.in_(allowed_pods))
+
+    users = q.order_by(User.created_at.desc()).all()
     return jsonify(
         {
             "status": "success",
-            "data": [{"id": u.id, "email": u.email, "name": u.name, "role": u.role} for u in users],
+            "data": [{"id": u.id, "email": u.email, "name": u.name, "role": u.role, "pod": u.pod_name} for u in users],
         }
     ), 200
 
@@ -519,6 +506,7 @@ def create_user():
         raw_password = data.get("password")
         name = (data.get("name") or "").strip()
         role = (data.get("role") or "").strip()
+        pod = (data.get("pod") or data.get("pod_name") or "").strip() or None
 
         if not email:
             return jsonify({"status": "error", "message": "email is required"}), 400
@@ -530,7 +518,7 @@ def create_user():
             return jsonify({"status": "error", "message": "role is required"}), 400
 
         hashed = generate_password_hash(raw_password)
-        new_user = User(id=str(uuid.uuid4()), email=email, password=hashed, name=name, role=role)
+        new_user = User(id=str(uuid.uuid4()), email=email, password=hashed, name=name, role=role, pod_name=pod)
         db.session.add(new_user)
         db.session.commit()
 
@@ -569,9 +557,14 @@ def get_performance():
     identity = get_jwt_identity()          # email from token
     role = (get_jwt() or {}).get("role", "User")
 
+    # optional email query param (frontend may pass current user's email)
+    req_email = request.args.get('email')
+
     q = DailyTracker.query
 
+    # Server-side enforcement of visibility
     if role == "User":
+        # Always honor JWT identity for regular users
         q = q.filter(DailyTracker.email == identity)
 
     elif role in ["Manager", "Team Lead"]:
@@ -580,9 +573,14 @@ def get_performance():
         if not allowed_pods:
             return jsonify({"status": "success", "data": []}), 200
         q = q.filter(DailyTracker.pod_name.in_(allowed_pods))
+        # Managers/Team Leads may optionally request a specific user's data, but still restricted to their PODs
+        if req_email:
+            q = q.filter(DailyTracker.email == req_email)
 
     elif role == "Admin":
-        pass
+        # Admins may optionally filter by email
+        if req_email:
+            q = q.filter(DailyTracker.email == req_email)
 
     entries = q.order_by(DailyTracker.submitted_at.desc()).limit(500).all()
 
@@ -622,198 +620,94 @@ def submit_tracker():
     tracker_date = data.get("date")
     projects = data.get("projects") or []
 
-    first = projects[0] if isinstance(projects, list) and len(projects) > 0 else {}
-    project_name = first.get("projectName")
-    nature_of_work = first.get("natureOfWork")
-    task = first.get("task") or first.get("subTask")
-    dedicated_hours = first.get("dedicatedHours")
-    remarks = first.get("remarks")
-
-    entry = DailyTracker(
-        id=str(uuid.uuid4()),
-        email=email,
-        date=tracker_date or "",
-        mode_of_functioning=mode,
-        pod_name=pod,
-        product=product,
-        project_name=project_name,
-        nature_of_work=nature_of_work,
-        task=task,
-        dedicated_hours=dedicated_hours,
-        remarks=remarks,
-
-        # AIMS
-        conductor_lines=first.get("conductorLines"),
-        number_of_points=first.get("numberOfPoints"),
-
-        # IVMS
-        benchmark_for_task=first.get("benchmarkForTask"),
-        line_miles=first.get("lineMiles"),
-        line_miles_h1v1=first.get("lineMilesH1V1"),
-        dedicated_hours_h1v1=first.get("dedicatedHoursH1V1"),
-        line_miles_h1v0=first.get("lineMilesH1V0"),
-        dedicated_hours_h1v0=first.get("dedicatedHoursH1V0"),
-
-        # Vendor POC
-        tracker_updating=first.get("trackerUpdating"),
-        data_quality_checking=first.get("dataQualityChecking"),
-        training_feedback=first.get("trainingFeedback"),
-        trn_remarks=first.get("trnRemarks"),
-        documentation=first.get("documentation"),
-        doc_remark=first.get("docRemark"),
-        others_misc=first.get("othersMisc"),
-        updated_in_prod_qc_tracker=first.get("updatedInProdQCTracker"),
-
-        # ISMS
-        site_name=first.get("siteName"),
-        area_hectares=first.get("areaHectares"),
-        polygon_feature_count=first.get("polygonFeatureCount"),
-        polyline_feature_count=first.get("polylineFeatureCount"),
-        point_feature_count=first.get("pointFeatureCount"),
-        spent_hours_on_above_task=first.get("spentHoursOnAboveTask"),
-        density=first.get("density"),
-
-        # RSMS
-        time_field=first.get("time"),
-
-        metadata_json=json.dumps(data),
-    )
-    db.session.add(entry)
-    db.session.commit()
-    return jsonify({"status": "success", "id": entry.id}), 201
-
-# -----------------------
-# Resource planning (JWT protected) ✅ force email from token
-# -----------------------
-@app.route("/api/resource-planning", methods=["POST"])
-@jwt_required()
-def submit_resource_planning():
-    initialize_rds()
-    data = request.json or {}
-
-    identity = get_jwt_identity()
-    email = identity  # ✅ lock submitter
-    date = data.get("date")
-
-    if not date:
-        return jsonify({"status": "error", "message": "date is required"}), 400
-
-    entry = ResourcePlanning(
-        id=str(uuid.uuid4()),
-        email=email,
-        date=date,
-        pod_name=data.get("podName"),
-        mode_of_functioning=data.get("modeOfFunctioning"),
-        product=data.get("product"),
-        project_name=data.get("projectName"),
-        nature_of_work=data.get("natureOfWork"),
-        task=data.get("task"),
-    )
-    db.session.add(entry)
-    db.session.commit()
-    return jsonify({"status": "success", "id": entry.id}), 201
-
-# -----------------------
-# Daily Activity New (JWT protected create + public list)
-# -----------------------
-@app.route("/api/daily-activity-new", methods=["POST"])
-@jwt_required()
-def create_daily_activity_new():
-    try:
-        initialize_rds()
-        data = request.json or {}
-
-        identity = get_jwt_identity()
-        email = identity  # ✅ lock submitter
-
-        activity_date = data.get("activityDate") or data.get("activity_date")
-        if not activity_date:
-            return jsonify({"status": "error", "message": "activityDate is required"}), 400
-
-        entry = DailyActivityNew(
+    # Create an entry for EACH project
+    created_ids = []
+    for proj in projects:
+        # Helper to convert empty strings to None for numeric fields
+        def to_numeric(val):
+            if val is None or val == '' or val == 'undefined':
+                return None
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                return None
+        
+        def to_text(val):
+            if val is None or val == '' or val == 'undefined':
+                return None
+            return str(val).strip() if str(val).strip() else None
+        
+        def to_int(val):
+            """Convert boolean to int (0 or 1) for numeric columns"""
+            # Handle boolean first (before None check, since None is also falsy)
+            if isinstance(val, bool):
+                return 1 if val else 0
+            # Handle None, empty strings, undefined
+            if val is None or val == '' or val == 'undefined':
+                return 0  # Default to 0 for false values
+            # Try to convert to int
+            try:
+                result = int(val)
+                return result
+            except (ValueError, TypeError):
+                return 0  # Default to 0 on error
+        
+        entry = DailyTracker(
+            id=str(uuid.uuid4()),
             email=email,
-            name=data.get("name"),
-            mode_of_functioning=data.get("modeOfFunctioning") or data.get("mode_of_functioning"),
-            pod_name=data.get("podName") or data.get("pod_name"),
-            project_name=data.get("projectName") or data.get("project_name"),
-            nature_of_work=data.get("natureOfWork") or data.get("nature_of_work"),
-            task=data.get("task"),
-            dedicated_hours=data.get("dedicatedHours"),
-            dedicated_hours_h1v1=data.get("dedicatedHoursH1V1"),
-            dedicated_hours_h1v0=data.get("dedicatedHoursH1V0"),
-            line_miles=data.get("lineMiles"),
-            line_miles_h1v1=data.get("lineMilesH1V1"),
-            line_miles_h1v0=data.get("lineMilesH1V0"),
-            benchmark_for_task=data.get("benchmarkForTask"),
-            remarks=data.get("remarks"),
-            activity_date=datetime.fromisoformat(activity_date).date() if isinstance(activity_date, str) else activity_date,
+            date=tracker_date or "",
+            mode_of_functioning=mode,
+            pod_name=pod,
+            product=product,
+            project_name=proj.get("projectName"),
+            nature_of_work=proj.get("natureOfWork"),
+            task=proj.get("task") or proj.get("subTask"),
+            dedicated_hours=to_numeric(proj.get("dedicatedHours")),
+            remarks=to_text(proj.get("remarks")),
+
+            # AIMS
+            conductor_lines=to_numeric(proj.get("conductorLines")),
+            number_of_points=to_numeric(proj.get("numberOfPoints")),
+
+            # IVMS
+            benchmark_for_task=to_numeric(proj.get("benchmarkForTask")),
+            line_miles=to_numeric(proj.get("lineMiles")),
+            line_miles_h1v1=to_numeric(proj.get("lineMilesH1V1")),
+            dedicated_hours_h1v1=to_numeric(proj.get("dedicatedHoursH1V1")),
+            line_miles_h1v0=to_numeric(proj.get("lineMilesH1V0")),
+            dedicated_hours_h1v0=to_numeric(proj.get("dedicatedHoursH1V0")),
+
+            # Vendor POC (numeric booleans: 0 or 1)
+            tracker_updating=to_int(proj.get("trackerUpdating")),
+            data_quality_checking=to_int(proj.get("dataQualityChecking")),
+            training_feedback=to_int(proj.get("trainingFeedback")),
+            trn_remarks=to_text(proj.get("trnRemarks")),
+            documentation=to_int(proj.get("documentation")),
+            doc_remark=to_text(proj.get("docRemark")),
+            others_misc=to_text(proj.get("othersMisc")),
+            updated_in_prod_qc_tracker=proj.get("updatedInProdQCTracker"),
+
+            # ISMS
+            site_name=to_text(proj.get("siteName")),
+            area_hectares=to_numeric(proj.get("areaHectares")),
+            polygon_feature_count=to_numeric(proj.get("polygonFeatureCount")),
+            polyline_feature_count=to_numeric(proj.get("polylineFeatureCount")),
+            point_feature_count=to_numeric(proj.get("pointFeatureCount")),
+            spent_hours_on_above_task=to_numeric(proj.get("spentHoursOnAboveTask")),
+            density=to_numeric(proj.get("density")),
+
+            # RSMS
+            time_field=to_numeric(proj.get("timeField")),
+
+            metadata_json=json.dumps(data),
         )
-
         db.session.add(entry)
-        db.session.commit()
-        return jsonify({"status": "success", "message": "Daily activity entry created successfully", "id": entry.id}), 201
-    except IntegrityError:
-        db.session.rollback()
-        return jsonify({"status": "error", "message": "An entry for this email and date already exists"}), 409
-    except ValueError as e:
-        db.session.rollback()
-        return jsonify({"status": "error", "message": f"Invalid date format: {str(e)}"}), 400
-    except Exception as e:
-        logger.error(f"Error creating daily_activity_new entry: {e}")
-        db.session.rollback()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        created_ids.append(entry.id)
+    
+    db.session.commit()
+    return jsonify({"status": "success", "count": len(created_ids), "ids": created_ids}), 201
 
-@app.route("/api/daily-activity-new", methods=["GET"])
-def list_daily_activity_new():
-    try:
-        initialize_rds()
-        email = request.args.get("email")
-        date_from = request.args.get("date_from")
-        date_to = request.args.get("date_to")
-        pod_name = request.args.get("pod_name")
 
-        query = DailyActivityNew.query
-        if email:
-            query = query.filter_by(email=email)
-        if pod_name:
-            query = query.filter_by(pod_name=pod_name)
-        if date_from:
-            df = datetime.fromisoformat(date_from).date()
-            query = query.filter(DailyActivityNew.activity_date >= df)
-        if date_to:
-            dt = datetime.fromisoformat(date_to).date()
-            query = query.filter(DailyActivityNew.activity_date <= dt)
-
-        entries = query.order_by(DailyActivityNew.activity_date.desc()).limit(500).all()
-        data = []
-        for e in entries:
-            data.append(
-                {
-                    "id": e.id,
-                    "email": e.email,
-                    "name": e.name,
-                    "modeOfFunctioning": e.mode_of_functioning,
-                    "podName": e.pod_name,
-                    "projectName": e.project_name,
-                    "natureOfWork": e.nature_of_work,
-                    "task": e.task,
-                    "dedicatedHours": float(e.dedicated_hours) if e.dedicated_hours is not None else None,
-                    "dedicatedHoursH1V1": float(e.dedicated_hours_h1v1) if e.dedicated_hours_h1v1 is not None else None,
-                    "dedicatedHoursH1V0": float(e.dedicated_hours_h1v0) if e.dedicated_hours_h1v0 is not None else None,
-                    "lineMiles": float(e.line_miles) if e.line_miles is not None else None,
-                    "lineMilesH1V1": float(e.line_miles_h1v1) if e.line_miles_h1v1 is not None else None,
-                    "lineMilesH1V0": float(e.line_miles_h1v0) if e.line_miles_h1v0 is not None else None,
-                    "benchmarkForTask": e.benchmark_for_task,
-                    "remarks": e.remarks,
-                    "activityDate": e.activity_date.isoformat() if e.activity_date else None,
-                    "createdAt": e.created_at.isoformat() if e.created_at else None,
-                }
-            )
-
-        return jsonify({"status": "success", "data": data}), 200
-    except Exception as e:
-        logger.error(f"Error listing daily_activity_new: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
 
 # -----------------------
 # Resource table (JWT create + public list)
@@ -897,7 +791,7 @@ def list_resources():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 # -----------------------
-# Old Data + Filters (combined sources) ✅ JWT + RBAC + safe IN list expansion
+# Old Data + Filters (combined sources) ✅ Public access for now
 # -----------------------
 @app.route("/api/daily_activity", methods=["GET"])
 @jwt_required()
@@ -905,281 +799,149 @@ def get_daily_activity():
     try:
         initialize_rds()
 
+        # Get role and email from JWT claims
         identity = get_jwt_identity()
-        role = (get_jwt() or {}).get("role", "User")
+        claims = get_jwt()
+        role = claims.get("role", "User")
 
-        # frontend optional filters
+        # Allow role/email override via query params for testing (remove in production)
+        role = request.args.get("role", role)
+        identity = request.args.get("email", identity)
+
+        # Optional filters
         pod_name = request.args.get("pod_name")
         product = request.args.get("product")
         project_name = request.args.get("project_name")
         nature_of_work = request.args.get("nature_of_work")
         task = request.args.get("task")
 
-        where_clauses = ["1=1"]
-        params = {}
+        # Build query from DailyActivity (old data) table
+        q = DailyActivity.query
 
         # ✅ ROLE BASED ACCESS
         if role == "User":
-            where_clauses.append("email = :email")
-            params["email"] = identity
+            q = q.filter(DailyActivity.email == identity)
 
         elif role in ["Manager", "Team Lead"]:
             key = user_key_from_email(identity)
             allowed_pods = TEAM_ACCESS.get(role, {}).get(key, [])
             if not allowed_pods:
                 return jsonify({"status": "success", "data": []}), 200
+            q = q.filter(DailyActivity.pod_name.in_(allowed_pods))
 
-            # ✅ use IN :allowed_pods + bindparam(expanding=True)
-            where_clauses.append("pod_name IN (:allowed_pods)")
-
-            params["allowed_pods"] = allowed_pods
-
-            # optional: if user chooses a pod filter, allow only within allowed pods
+            # Optional: if user chooses a pod filter, allow only within allowed pods
             if pod_name:
                 if pod_name not in allowed_pods:
                     return jsonify({"status": "success", "data": []}), 200
-                where_clauses.append("pod_name = :pod_name")
-                params["pod_name"] = pod_name
+                q = q.filter(DailyActivity.pod_name == pod_name)
 
         elif role in ["Admin", "Internal Admin"]:
             if pod_name:
-                where_clauses.append("pod_name = :pod_name")
-                params["pod_name"] = pod_name
+                q = q.filter(DailyActivity.pod_name == pod_name)
 
-        # other filters
+        # Apply other filters
         if product:
-            where_clauses.append("product = :product")
-            params["product"] = product
+            q = q.filter(DailyActivity.product == product)
         if project_name:
-            where_clauses.append("project_name = :project_name")
-            params["project_name"] = project_name
+            q = q.filter(DailyActivity.project_name == project_name)
         if nature_of_work:
-            where_clauses.append("nature_of_work = :nature_of_work")
-            params["nature_of_work"] = nature_of_work
+            q = q.filter(DailyActivity.nature_of_work == nature_of_work)
         if task:
-            where_clauses.append("task = :task")
-            params["task"] = task
+            q = q.filter(DailyActivity.task == task)
 
-        where_sql = " AND ".join(where_clauses)
+        # Date range filtering
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        if start_date:
+            q = q.filter(DailyActivity.activity_date >= start_date)
+        if end_date:
+            q = q.filter(DailyActivity.activity_date <= end_date)
 
-        if USE_BOTH_SOURCES:
-            sql_query = (
-                f"SELECT id, email, pod_name, mode_of_functioning, product, project_name, nature_of_work, task, dedicated_hours, remarks, submitted_at "
-                f"FROM {OLD_DATA_TABLE} WHERE {where_sql} "
-                f"UNION ALL "
-                f"SELECT id, email, pod_name, mode_of_functioning, product, project_name, nature_of_work, task, dedicated_hours, remarks, submitted_at "
-                f"FROM daily_tracker_table WHERE {where_sql} "
-                f"ORDER BY submitted_at DESC NULLS LAST"
-            )
-        else:
-            sql_query = (
-                f"SELECT id, email, pod_name, mode_of_functioning, product, project_name, nature_of_work, task, dedicated_hours, remarks, submitted_at "
-                f"FROM {OLD_DATA_TABLE} WHERE {where_sql} ORDER BY submitted_at DESC NULLS LAST"
-            )
-
-        rows = exec_text(sql_query, params).fetchall()
+        entries = q.order_by(DailyActivity.activity_date.desc()).limit(50).all()
 
         result_data = []
-        for row in rows:
-            row_dict = dict(row._mapping)
+        for e in entries:
             result_data.append({
-                "id": row_dict.get("id"),
-                "email": row_dict.get("email"),
-                "podName": row_dict.get("pod_name"),
-                "modeOfFunctioning": row_dict.get("mode_of_functioning"),
-                "product": row_dict.get("product"),
-                "projectName": row_dict.get("project_name"),
-                "natureOfWork": row_dict.get("nature_of_work"),
-                "task": row_dict.get("task"),
-                "dedicatedHours": float(row_dict.get("dedicated_hours")) if row_dict.get("dedicated_hours") is not None else None,
-                "remarks": row_dict.get("remarks"),
-                "submittedAt": row_dict.get("submitted_at").isoformat() if row_dict.get("submitted_at") else None,
+                "id": e.id,
+                "email": e.email,
+                "name": e.name,
+                "podName": e.pod_name,
+                "modeOfFunctioning": e.mode_of_functioning,
+                "product": e.product,
+                "projectName": e.project_name,
+                "natureOfWork": e.nature_of_work,
+                "task": e.task,
+                "dedicatedHours": float(e.dedicated_hours) if e.dedicated_hours is not None else None,
+                "remarks": e.remarks,
+                "activityDate": e.activity_date.isoformat() if e.activity_date else None,
             })
 
         return jsonify({"status": "success", "data": result_data}), 200
 
     except Exception as e:
-        logger.error(f"Error fetching old data: {str(e)}")
-        return jsonify({"status": "error", "message": f"Error fetching old data: {str(e)}"}), 500
+        logger.error(f"Error fetching daily_activity: {str(e)}")
+        return jsonify({"status": "error", "message": f"Error fetching data: {str(e)}"}), 500
 
 @app.route("/api/daily_activity/filters", methods=["GET"])
-@jwt_required()
 def get_daily_activity_filters():
-    """
-    ✅ JWT + RBAC-protected filter values.
-    Users only see their own values.
-    Managers/Team Leads only see values within allowed pods.
-    Admin sees all.
-    """
+    """Get filter values from metadata.json with role-based filtering."""
     try:
-        
+        initialize_rds()
 
-        identity = get_jwt_identity()
-        role = (get_jwt() or {}).get("role", "User")
+        # Load metadata
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        metadata_path = os.path.join(base_dir, "metadata.json")
+        
+        ui_options = {}
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+                ui_options = metadata.get("uiOptions", {})
+        except Exception as e:
+            logger.warning(f"Could not load metadata.json: {e}")
+
+        # Get from metadata or empty
+        all_products = ui_options.get("products", [])
+        all_project_names = ui_options.get("projectNames", [])
+        all_nature_of_work = ui_options.get("natureOfWork", [])
+        all_tasks = ui_options.get("tasks", [])
+        all_pod_names = ui_options.get("podNames", [])
+
+        # Get user info
+        identity = request.args.get("email", "admin@aidash.com")
+        role = request.args.get("role", "Admin")
         key = user_key_from_email(identity)
 
-        products = []
-        project_names = []
-        nature_of_work = []
-        tasks = []
-        pod_names = []
-
-        where_clauses = ["1=1"]
-        params = {}
-
-        allowed_pods = []
-
-        if role == "User":
-            where_clauses.append("email = :email")
-            params["email"] = identity
-
-        elif role in ["Manager", "Team Lead"]:
+        # Filter POD names based on role
+        pod_names = all_pod_names
+        if role in ["Manager", "Team Lead"]:
             allowed_pods = TEAM_ACCESS.get(role, {}).get(key, [])
             if not allowed_pods:
                 return jsonify(
                     {"status": "success",
                      "data": {"products": [], "projectNames": [], "natureOfWork": [], "tasks": [], "podNames": []}}
                 ), 200
-            where_clauses.append("pod_name IN (:allowed_pods)")
-
-            params["allowed_pods"] = allowed_pods
-
-        # Admin: no additional restriction
-
-        where_sql = " AND ".join(where_clauses)
-
-        # products
-        try:
-            if USE_BOTH_SOURCES:
-                query = (
-                    f"SELECT DISTINCT product FROM ("
-                    f"SELECT product FROM {OLD_DATA_TABLE} WHERE {where_sql} UNION ALL "
-                    f"SELECT product FROM daily_tracker_table WHERE {where_sql} ) as prod "
-                    f"WHERE product IS NOT NULL AND product != '' ORDER BY product"
-                )
-            else:
-                query = (
-                    f"SELECT DISTINCT product FROM {OLD_DATA_TABLE} "
-                    f"WHERE {where_sql} AND product IS NOT NULL AND product != '' ORDER BY product"
-                )
-
-            result = exec_text(query, params)
-            products = [row[0] for row in result.fetchall()]
-        except Exception as e:
-            logger.warning(f"Error fetching products: {e}")
-            products = []
-
-        # project names
-        try:
-            if USE_BOTH_SOURCES:
-                query = (
-                    f"SELECT DISTINCT project_name FROM ("
-                    f"SELECT project_name FROM {OLD_DATA_TABLE} WHERE {where_sql} UNION ALL "
-                    f"SELECT project_name FROM daily_tracker_table WHERE {where_sql} ) as proj "
-                    f"WHERE project_name IS NOT NULL AND project_name != '' ORDER BY project_name"
-                )
-            else:
-                query = (
-                    f"SELECT DISTINCT project_name FROM {OLD_DATA_TABLE} "
-                    f"WHERE {where_sql} AND project_name IS NOT NULL AND project_name != '' ORDER BY project_name"
-                )
-
-            result = exec_text(query, params)
-            project_names = [row[0] for row in result.fetchall()]
-        except Exception as e:
-            logger.warning(f"Error fetching project_names: {e}")
-            project_names = []
-
-        # nature of work
-        try:
-            if USE_BOTH_SOURCES:
-                query = (
-                    f"SELECT DISTINCT nature_of_work FROM ("
-                    f"SELECT nature_of_work FROM {OLD_DATA_TABLE} WHERE {where_sql} UNION ALL "
-                    f"SELECT nature_of_work FROM daily_tracker_table WHERE {where_sql} ) as nat "
-                    f"WHERE nature_of_work IS NOT NULL AND nature_of_work != '' ORDER BY nature_of_work"
-                )
-            else:
-                query = (
-                    f"SELECT DISTINCT nature_of_work FROM {OLD_DATA_TABLE} "
-                    f"WHERE {where_sql} AND nature_of_work IS NOT NULL AND nature_of_work != '' ORDER BY nature_of_work"
-                )
-
-            result = exec_text(query, params)
-            nature_of_work = [row[0] for row in result.fetchall()]
-        except Exception as e:
-            logger.warning(f"Error fetching nature_of_work: {e}")
-            nature_of_work = []
-
-        # tasks
-        try:
-            if USE_BOTH_SOURCES:
-                query = (
-                    f"SELECT DISTINCT task FROM ("
-                    f"SELECT task FROM {OLD_DATA_TABLE} WHERE {where_sql} UNION ALL "
-                    f"SELECT task FROM daily_tracker_table WHERE {where_sql} ) as t "
-                    f"WHERE task IS NOT NULL AND task != '' ORDER BY task"
-                )
-            else:
-                query = (
-                    f"SELECT DISTINCT task FROM {OLD_DATA_TABLE} "
-                    f"WHERE {where_sql} AND task IS NOT NULL AND task != '' ORDER BY task"
-                )
-
-            result = exec_text(query, params)
-            tasks = [row[0] for row in result.fetchall()]
-        except Exception as e:
-            logger.warning(f"Error fetching tasks: {e}")
-            tasks = []
-
-        # pod names dropdown
-        if role in ["Admin", "Internal Admin"]:
-
-            try:
-                if USE_BOTH_SOURCES:
-                    query = (
-                        f"SELECT DISTINCT pod_name FROM ("
-                        f"SELECT pod_name FROM {OLD_DATA_TABLE} WHERE pod_name IS NOT NULL AND pod_name != '' UNION ALL "
-                        f"SELECT pod_name FROM daily_tracker_table WHERE pod_name IS NOT NULL AND pod_name != '' ) as p "
-                        f"ORDER BY pod_name"
-                    )
-                else:
-                    query = (
-                        f"SELECT DISTINCT pod_name FROM {OLD_DATA_TABLE} "
-                        f"WHERE pod_name IS NOT NULL AND pod_name != '' ORDER BY pod_name"
-                    )
-                result = exec_text(query, {})
-                pod_names = [row[0] for row in result.fetchall()]
-            except Exception as e:
-                logger.warning(f"Error fetching pod_names: {e}")
-                pod_names = []
-            pod_names_out = sorted(filter(None, pod_names))
-
-        elif role in ["Manager", "Team Lead"]:
-            pod_names_out = allowed_pods
-
-        else:
-            pod_names_out = []
+            pod_names = allowed_pods
 
         return jsonify(
             {
-                "status": "success",
-                "data": {
-                    "products": sorted(filter(None, products)),
-                    "projectNames": sorted(filter(None, project_names)),
-                    "natureOfWork": sorted(filter(None, nature_of_work)),
-                    "tasks": sorted(filter(None, tasks)),
-                    "podNames": pod_names_out,
-                },
+                "products": all_products,
+                "projectNames": all_project_names,
+                "natureOfWork": all_nature_of_work,
+                "tasks": all_tasks,
+                "podNames": pod_names,
             }
         ), 200
 
     except Exception as e:
-        logger.error(f"Error fetching old data filters: {str(e)}")
+        logger.error(f"Error fetching filters: {str(e)}")
         return jsonify(
             {
-                "status": "success",
-                "data": {"products": [], "projectNames": [], "natureOfWork": [], "tasks": [], "podNames": []},
+                "products": [], 
+                "projectNames": [], 
+                "natureOfWork": [], 
+                "tasks": [], 
+                "podNames": []
             }
         ), 200
 
@@ -1192,43 +954,39 @@ def edit_daily_activity_by_keys():
 
     data = request.json or {}
 
-    required = ["email", "project_name", "submitted_at"]
+    required = ["id"]
     for r in required:
         if not data.get(r):
             return jsonify({"status": "error", "message": f"{r} is required"}), 400
 
-    allowed_fields = [
+    # Allow all editable fields for Admin/Internal Admin
+    all_editable_fields = [
         "pod_name",
         "mode_of_functioning",
         "product",
+        "project_name",
         "nature_of_work",
         "task",
         "dedicated_hours",
         "remarks",
     ]
 
-    updates = {k: data[k] for k in allowed_fields if k in data}
+    updates = {k: data[k] for k in all_editable_fields if k in data}
     if not updates:
         return jsonify({"status": "error", "message": "No fields to update"}), 400
 
-    set_sql = ", ".join([f"{k} = :{k}" for k in updates])
-    updates.update({
-        "email": data["email"],
-        "project_name": data["project_name"],
-        "submitted_at": data["submitted_at"],
-    })
+    # Try DailyActivity first (old data), then DailyTracker (current data)
+    entry = DailyActivity.query.get(data["id"])
+    if not entry:
+        entry = DailyTracker.query.get(data["id"])
+    
+    if not entry:
+        return jsonify({"status": "error", "message": "Entry not found"}), 404
 
-    sql = f"""
-      UPDATE {OLD_DATA_TABLE}
-      SET {set_sql}
-      WHERE email = :email
-        AND project_name = :project_name
-        AND DATE(submitted_at) = DATE(:submitted_at)
-    """
+    for field, value in updates.items():
+        setattr(entry, field, value)
 
-    exec_text(sql, updates)
     db.session.commit()
-
     return jsonify({"status": "success", "message": "Row updated"}), 200
 
 # --- helpers ---
@@ -1247,7 +1005,7 @@ def _parse_date(d: str):
             return None
 
 # -----------------------
-# API: Performance (supports date filters + role/email scoping)
+# API: Performance (with date filters + role/email scoping)
 # -----------------------
 @app.route("/api/performance", methods=["GET"])
 def api_performance():
@@ -1257,38 +1015,36 @@ def api_performance():
         role = request.args.get("role", "")
         email = request.args.get("email", "")
 
-        q = DailyActivityNew.query
+        q = DailyTracker.query
 
         start_dt = _parse_date(start_date)
         end_dt = _parse_date(end_date)
         if start_dt:
-            q = q.filter(DailyActivityNew.submitted_at >= start_dt)
+            q = q.filter(DailyTracker.submitted_at >= start_dt)
         if end_dt:
-            # include full day
-            q = q.filter(DailyActivityNew.submitted_at <= (end_dt + timedelta(days=1) - timedelta(seconds=1)))
+            q = q.filter(DailyTracker.submitted_at <= (end_dt + timedelta(days=1) - timedelta(seconds=1)))
 
-        # restrict regular users to their own data
+        # Restrict regular users to their own data
         if role not in ("Manager", "Admin", "Internal Admin", "Team Lead"):
             if email:
-                q = q.filter(DailyActivityNew.email == email)
+                q = q.filter(DailyTracker.email == email)
             else:
                 return jsonify({"status": "error", "message": "email required for user scope"}), 400
 
-        rows = q.order_by(DailyActivityNew.submitted_at.desc()).limit(5000).all()
+        rows = q.order_by(DailyTracker.submitted_at.desc()).limit(5000).all()
 
         out = []
         for r in rows:
             out.append({
-                "id": getattr(r, "id", None),
-                "email": getattr(r, "email", None),
-                "name": getattr(r, "name", None),
-                "product": getattr(r, "product", None),
-                "projectName": getattr(r, "project_name", None),
-                "natureOfWork": getattr(r, "nature_of_work", None),
-                "task": getattr(r, "task", None),
-                "hours": getattr(r, "dedicated_hours", None) or getattr(r, "hours", None),
-                "podName": getattr(r, "pod_name", None),
-                "submitted_at": (getattr(r, "submitted_at", None).isoformat() if getattr(r, "submitted_at", None) else None)
+                "id": r.id,
+                "email": r.email,
+                "product": r.product,
+                "projectName": r.project_name,
+                "natureOfWork": r.nature_of_work,
+                "task": r.task,
+                "hours": float(r.dedicated_hours) if r.dedicated_hours else None,
+                "podName": r.pod_name,
+                "submitted_at": r.submitted_at.isoformat() if r.submitted_at else None
             })
 
         return jsonify({"status": "success", "data": out})
@@ -1298,7 +1054,7 @@ def api_performance():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 # -----------------------
-# API: Team report (aggregated per-user) — uses same date/role/email scoping
+# API: Team report (aggregated per-user)
 # -----------------------
 @app.route("/api/team-report", methods=["GET"])
 def api_team_report():
@@ -1308,31 +1064,31 @@ def api_team_report():
         role = request.args.get("role", "")
         email = request.args.get("email", "")
 
-        q = DailyActivityNew.query
+        q = DailyTracker.query
 
         start_dt = _parse_date(start_date)
         end_dt = _parse_date(end_date)
         if start_dt:
-            q = q.filter(DailyActivityNew.submitted_at >= start_dt)
+            q = q.filter(DailyTracker.submitted_at >= start_dt)
         if end_dt:
-            q = q.filter(DailyActivityNew.submitted_at <= (end_dt + timedelta(days=1) - timedelta(seconds=1)))
+            q = q.filter(DailyTracker.submitted_at <= (end_dt + timedelta(days=1) - timedelta(seconds=1)))
 
-        # regular users only see their own aggregated report
+        # Regular users only see their own aggregated report
         if role not in ("Manager", "Admin", "Internal Admin", "Team Lead"):
             if email:
-                q = q.filter(DailyActivityNew.email == email)
+                q = q.filter(DailyTracker.email == email)
             else:
                 return jsonify({"status": "error", "message": "email required for user scope"}), 400
 
-        rows = q.order_by(DailyActivityNew.submitted_at.desc()).all()
+        rows = q.order_by(DailyTracker.submitted_at.desc()).all()
 
         agg = {}
         for r in rows:
-            em = getattr(r, "email", None) or getattr(r, "name", None) or "unknown"
+            em = r.email or "unknown"
             if em not in agg:
-                agg[em] = {"email": em, "name": getattr(r, "name", None), "entries": 0, "totalHours": 0.0}
+                agg[em] = {"email": em, "entries": 0, "totalHours": 0.0}
             try:
-                h = float(getattr(r, "dedicated_hours", None) or getattr(r, "hours", 0) or 0)
+                h = float(r.dedicated_hours or 0)
             except Exception:
                 h = 0.0
             agg[em]["entries"] += 1
@@ -1342,7 +1098,6 @@ def api_team_report():
         for v in agg.values():
             out.append({
                 "email": v["email"],
-                "name": v.get("name"),
                 "entries": v["entries"],
                 "totalHours": round(v["totalHours"], 2),
                 "avgDaily": round((v["totalHours"] / v["entries"]) if v["entries"] else 0, 2)

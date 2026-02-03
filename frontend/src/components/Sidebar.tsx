@@ -21,8 +21,8 @@ const Sidebar: React.FC<any> = ({ currentUser, currentView, setCurrentView, onLo
       <div className="px-5 space-y-2">
         <SidebarItem icon={Home} label="Terminal Home" onClick={() => setCurrentView('home')} active={currentView === 'home'} />
         <SidebarItem icon={Layers} label="Resource Planner" onClick={() => setCurrentView('resourcePlanner')} active={currentView === 'resourcePlanner'} />
-        <SidebarItem icon={Send} label="Activity Logger" onClick={() => setCurrentView('tracker')} active={currentView === 'tracker'} />
-        <SidebarItem icon={Activity} label="Metrics" onClick={() => setCurrentView('performance')} active={currentView === 'performance'} />
+        <SidebarItem icon={Send} label="Daily tracker" onClick={() => setCurrentView('tracker')} active={currentView === 'tracker'} />
+        <SidebarItem icon={Activity} label="Individual Report" onClick={() => setCurrentView('performance')} active={currentView === 'performance'} />
         <SidebarItem icon={Database} label="Old Data" onClick={() => setCurrentView('oldData')} active={currentView === 'oldData'} />
         {currentUser && <SidebarItem icon={Users} label="Team Report" onClick={() => setCurrentView('teamReport')} active={currentView === 'teamReport'} />}
         {currentUser?.role === 'Admin' && <SidebarItem icon={Cpu} label="Team Control" onClick={() => setCurrentView('teamControl')} active={currentView === 'teamControl'} />}
