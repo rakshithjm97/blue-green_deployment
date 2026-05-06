@@ -8,7 +8,11 @@ import uuid
 import logging
 import secrets
 import hashlib
-from sqlalchemy.exc import IntegrityError
+from pathlib import Path
+from urllib.parse import quote_plus
+from collections import defaultdict
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError, OperationalError
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import (
     JWTManager,
@@ -19,6 +23,23 @@ from flask_jwt_extended import (
     get_jwt_identity,
     get_jwt,
 )
+
+from dotenv import load_dotenv
+
+
+_backend_dir = Path(__file__).resolve().parent
+load_dotenv(_backend_dir / ".env", encoding="utf-8-sig")
+
+
+def _env_str(key: str, default: str) -> str:
+    raw = os.environ.get(key)
+    if raw is None:
+        return default
+    v = raw.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
+        v = v[1:-1].strip()
+    return v if v else default
+
 
 # -----------------------
 # Logging
@@ -35,18 +56,40 @@ CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
 # -----------------------
 # Database config
 # -----------------------
-# NOTE: In production, DO NOT hardcode credentials in code.
-DB_USER = os.environ.get("DB_USER", "postgres")
-DB_PASS = os.environ.get("DB_PASS", "Admin1234")
-DB_HOST = os.environ.get("DB_HOST", "database-1.cdoe0oi2s7w4.ap-south-1.rds.amazonaws.com")
-DB_PORT = os.environ.get("DB_PORT", "5432")
-DB_NAME = os.environ.get("DB_NAME", "postgres")
+# NOTE: In production, set DATABASE_URL (or DB_* vars) via env — do not rely on defaults.
+# Defaults match local Postgres from ivms3/docker-compose.yml (host DB on 127.0.0.1:5432).
+DB_USER = _env_str("DB_USER", "postgres")
+DB_PASS = _env_str("DB_PASS", "password")
+DB_HOST = _env_str("DB_HOST", "127.0.0.1")
+DB_PORT = _env_str("DB_PORT", "5432")
+DB_NAME = _env_str("DB_NAME", "postgres")
 
-RDS_URL = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}?sslmode=prefer"
+_u = quote_plus(DB_USER or "")
+_p = quote_plus(DB_PASS or "")
+_n = quote_plus(DB_NAME or "", safe="")
+_default_local_pg = (
+    f"postgresql://{_u}:{_p}@{DB_HOST}:{DB_PORT}/{_n}?sslmode=disable"
+)
 
-DATABASE_URL = os.environ.get("DATABASE_URL", RDS_URL)
+_env_url = os.environ.get("DATABASE_URL")
+DATABASE_URL = (_env_url.strip() if _env_url else "") or _default_local_pg
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+if (_backend_dir / ".env").is_file():
+    logger.info("Using database settings from %s", _backend_dir / ".env")
+else:
+    logger.warning(
+        "No %s — default user postgres / password 'password'. If auth fails, copy .env.example to .env and set DB_PASS to your pgAdmin password.",
+        _backend_dir / ".env",
+    )
+logger.info(
+    "Postgres connection target: user=%s host=%s port=%s db=%s (password from env, not logged)",
+    DB_USER,
+    DB_HOST,
+    DB_PORT,
+    DB_NAME,
+)
 
 app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
@@ -76,6 +119,10 @@ RESET_TOKEN_MINUTES = int(os.environ.get("RESET_TOKEN_MINUTES", "30"))
 
 db = SQLAlchemy(app)
 
+# First-time sign-in (seed + optional POST /api/bootstrap-default-admin); override via .env
+DEFAULT_ADMIN_EMAIL = _env_str("DEFAULT_ADMIN_EMAIL", "admin@aidash.com")
+DEFAULT_ADMIN_PASSWORD_PLAIN = _env_str("DEFAULT_ADMIN_PASSWORD", "password123")
+
 # All data consolidated into single database
 
 # -----------------------
@@ -90,23 +137,21 @@ def require_admin() -> bool:
 
 # ✅ RBAC map: keys must match user_key_from_email()
 # Recommended: use full emails as keys (more reliable than prefix).
+# POD strings must match metadata.json uiOptions.podNames (and values stored on tracker rows).
 TEAM_ACCESS = {
     "Manager": {
-        # "manager1@aidash.com": ["POD-1 (Aryabhatta)", "POD-2 (Crawlers)"],
-        # "manager2@aidash.com": ["POD-3 (Marte)", "POD-4 (Gaganyan)"],
-        # "manager3@aidash.com": ["POD-5 (Swift)", "POD-6 (Imagery)"],
-        "manager1": ["POD-1 (Aryabhatta)", "POD-2 (Crawlers)"],
-        "manager2": ["POD-3 (Marte)", "POD-4 (Gaganyan)"],
+        "manager1": ["POD-1 (Aryabhata)", "POD-2 (Crawlers)"],
+        "manager2": ["POD-3 (Marte)", "POD-4 (Gaganyaan)"],
         "manager3": ["POD-5 (Swift)", "POD-6 (Imagery)"],
     },
     "Team Lead": {
-        "team_lead1": ["POD-1 (Aryabhatta)"],
+        "team_lead1": ["POD-1 (Aryabhata)"],
         "team_lead2": ["POD-2 (Crawlers)"],
         "team_lead3": ["POD-3 (Marte)"],
-        "team_lead4": ["POD-4 (Gaganyan)"],
+        "team_lead4": ["POD-4 (Gaganyaan)"],
         "team_lead5": ["POD-5 (Swift)"],
         "team_lead6": ["POD-6 (Imagery)"],
-    }
+    },
 }
 
 def user_key_from_email(email: str) -> str:
@@ -234,11 +279,49 @@ class DailyActivity(db.Model):
 # DB init
 # -----------------------
 _tables_verified = False
+_db_init_permanent_fail = False
+_db_init_logged = False
+
+
+def ensure_users_schema():
+    """
+    Tables created via backend/sql/create_tables.sql may omit columns the ORM expects.
+    Without this, inserts (e.g. default admin) can fail silently or abort init.
+    """
+    if DATABASE_URL.startswith("sqlite"):
+        return
+    try:
+        with db.engine.begin() as conn:
+            conn.execute(
+                text("ALTER TABLE users_table ADD COLUMN IF NOT EXISTS pod_name VARCHAR(100)")
+            )
+    except Exception as e:
+        logger.warning("ensure_users_schema (non-fatal): %s", e)
+
+
+def _seed_default_admin():
+    """Insert default admin if missing (plain password hashed once)."""
+    if User.query.filter_by(email=DEFAULT_ADMIN_EMAIL).first():
+        return False
+    admin = User(
+        id=str(uuid.uuid4()),
+        email=DEFAULT_ADMIN_EMAIL,
+        password=generate_password_hash(DEFAULT_ADMIN_PASSWORD_PLAIN),
+        name="System Admin",
+        role="Admin",
+    )
+    db.session.add(admin)
+    db.session.commit()
+    logger.info("Seeded default admin user %s", DEFAULT_ADMIN_EMAIL)
+    return True
+
 
 def initialize_rds():
-    global _tables_verified
+    global _tables_verified, _db_init_permanent_fail, _db_init_logged
     if _tables_verified:
         return True
+    if _db_init_permanent_fail:
+        return False
 
     try:
         # ✅ Ensure we have an application context
@@ -247,18 +330,10 @@ def initialize_rds():
                 return initialize_rds()
 
         db.create_all()
+        ensure_users_schema()
 
-        # Ensure default admin exists
-        if not User.query.filter_by(email="admin@aidash.com").first():
-            admin = User(
-                id=str(uuid.uuid4()),
-                email="admin@aidash.com",
-                password=generate_password_hash("password123"),
-                name="System Admin",
-                role="Admin",
-            )
-            db.session.add(admin)
-            db.session.commit()
+        # Ensure default admin exists (needed for first-time login)
+        _seed_default_admin()
 
         # Seed sample users if none exist
         if User.query.count() == 1:  # Only admin exists
@@ -275,7 +350,15 @@ def initialize_rds():
         return True
 
     except Exception as e:
-        logger.error(f"DB Init Error: {e}")
+        _db_init_permanent_fail = True
+        if not _db_init_logged:
+            _db_init_logged = True
+            logger.error("DB Init Error: %s", e)
+            if "password authentication failed" in str(e).lower():
+                logger.error(
+                    "Set DB_PASS or DATABASE_URL in %s (.env.example as template); use the same password as pgAdmin.",
+                    _backend_dir / ".env",
+                )
         return False
 # -----------------------
 # Static routes (React build)
@@ -295,7 +378,70 @@ def assets(filename):
 # -----------------------
 @app.route("/api/health", methods=["GET"])
 def health_check():
-    return jsonify({"status": "connected", "timestamp": datetime.now(timezone.utc).isoformat()}), 200
+    ts = datetime.now(timezone.utc).isoformat()
+    if not initialize_rds():
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "database": False,
+                    "timestamp": ts,
+                    "hint": "Postgres unreachable or password rejected — fix backend/.env (DB_PASS or DATABASE_URL).",
+                }
+            ),
+            503,
+        )
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as e:
+        logger.error("Health DB ping failed: %s", e)
+        return jsonify({"status": "error", "database": False, "timestamp": ts, "message": str(e)}), 503
+    return jsonify({"status": "ok", "database": True, "timestamp": ts}), 200
+
+
+@app.route("/api/bootstrap-default-admin", methods=["POST"])
+def bootstrap_default_admin():
+    """
+    One-time setup when users_table exists but admin row is missing.
+    Disable in production if needed: ALLOW_DB_BOOTSTRAP=0
+    """
+    allow = os.environ.get("ALLOW_DB_BOOTSTRAP", "true").strip().lower()
+    if allow in ("0", "false", "no"):
+        return jsonify({"status": "error", "message": "Bootstrap disabled (ALLOW_DB_BOOTSTRAP)."}), 403
+    if not initialize_rds():
+        return jsonify({"status": "error", "message": "Database not available."}), 503
+    try:
+        ensure_users_schema()
+        if User.query.filter_by(email=DEFAULT_ADMIN_EMAIL).first():
+            return (
+                jsonify(
+                    {
+                        "status": "success",
+                        "alreadyExists": True,
+                        "email": DEFAULT_ADMIN_EMAIL,
+                        "message": "Admin already exists — use Forgot password or sign in.",
+                    }
+                ),
+                200,
+            )
+        _seed_default_admin()
+        return (
+            jsonify(
+                {
+                    "status": "success",
+                    "alreadyExists": False,
+                    "email": DEFAULT_ADMIN_EMAIL,
+                    "password": DEFAULT_ADMIN_PASSWORD_PLAIN,
+                    "message": "Default admin created. Sign in, then change the password.",
+                }
+            ),
+            201,
+        )
+    except Exception as e:
+        logger.exception("bootstrap_default_admin")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 
 @app.route("/api/debug/daily-activity-count", methods=["GET"])
 def debug_daily_activity_count():
@@ -322,15 +468,36 @@ def ui_options():
 
 @app.route("/api/login", methods=["POST"])
 def login():
-    initialize_rds()
-    data = request.json or {}
+    if not initialize_rds():
+        return jsonify(
+            {
+                "status": "error",
+                "message": (
+                    "PostgreSQL rejected the password in backend/.env. "
+                    "If Docker Postgres from this project is on port 5432, set DB_PASS=password. "
+                    "If you use only native Postgres, set DB_PASS to the same password as in pgAdmin. "
+                    "Restart Flask after editing .env."
+                ),
+            }
+        ), 503
+
+    data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip()
     password = data.get("password")
 
     if not email or not password:
         return jsonify({"status": "error", "message": "email and password required"}), 400
 
-    user = User.query.filter_by(email=email).first()
+    try:
+        user = User.query.filter_by(email=email).first()
+    except OperationalError as e:
+        logger.error("Login DB error: %s", e)
+        return jsonify(
+            {
+                "status": "error",
+                "message": "Database error during login. Check backend/.env DB_* and that Postgres is running.",
+            }
+        ), 503
     if not user or not check_password_hash(user.password, password):
         return jsonify({"status": "error", "message": "Invalid credentials"}), 401
 
@@ -546,6 +713,21 @@ def delete_user(user_id):
 
     return jsonify({"status": "success"}), 200
 
+
+def _parse_date(d: str):
+    if not d:
+        return None
+    try:
+        if len(d) == 10:
+            return datetime.fromisoformat(d).replace(tzinfo=timezone.utc)
+        return datetime.fromisoformat(d)
+    except Exception:
+        try:
+            return datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+
+
 # -----------------------
 # Performance (RBAC)
 # -----------------------
@@ -557,14 +739,18 @@ def get_performance():
     identity = get_jwt_identity()          # email from token
     role = (get_jwt() or {}).get("role", "User")
 
-    # optional email query param (frontend may pass current user's email)
-    req_email = request.args.get('email')
+    # optional email query param (Admin / Manager / Team Lead may narrow to one user)
+    req_email = request.args.get("email")
+
+    start_date = request.args.get("start_date")
+    end_date = request.args.get("end_date")
+    start_dt = _parse_date(start_date) if start_date else None
+    end_dt = _parse_date(end_date) if end_date else None
 
     q = DailyTracker.query
 
-    # Server-side enforcement of visibility
+    # Server-side enforcement of visibility (JWT only — never trust client role query params)
     if role == "User":
-        # Always honor JWT identity for regular users
         q = q.filter(DailyTracker.email == identity)
 
     elif role in ["Manager", "Team Lead"]:
@@ -573,16 +759,23 @@ def get_performance():
         if not allowed_pods:
             return jsonify({"status": "success", "data": []}), 200
         q = q.filter(DailyTracker.pod_name.in_(allowed_pods))
-        # Managers/Team Leads may optionally request a specific user's data, but still restricted to their PODs
         if req_email:
             q = q.filter(DailyTracker.email == req_email)
 
-    elif role == "Admin":
-        # Admins may optionally filter by email
+    elif role in ("Admin", "Internal Admin"):
         if req_email:
             q = q.filter(DailyTracker.email == req_email)
 
-    entries = q.order_by(DailyTracker.submitted_at.desc()).limit(500).all()
+    else:
+        q = q.filter(DailyTracker.email == identity)
+
+    if start_dt:
+        q = q.filter(DailyTracker.submitted_at >= start_dt)
+    if end_dt:
+        q = q.filter(DailyTracker.submitted_at <= (end_dt + timedelta(days=1) - timedelta(seconds=1)))
+
+    row_limit = 10000 if (start_dt or end_dt) else 2000
+    entries = q.order_by(DailyTracker.submitted_at.desc()).limit(row_limit).all()
 
     return jsonify(
         {
@@ -594,8 +787,12 @@ def get_performance():
                     "podName": e.pod_name,
                     "product": e.product,
                     "projectName": e.project_name,
+                    "natureOfWork": e.nature_of_work,
+                    "task": e.task,
                     "hours": float(e.dedicated_hours) if e.dedicated_hours is not None else None,
+                    "dedicatedHours": float(e.dedicated_hours) if e.dedicated_hours is not None else None,
                     "submitted_at": e.submitted_at.isoformat() if e.submitted_at else None,
+                    "submittedAt": e.submitted_at.isoformat() if e.submitted_at else None,
                 }
                 for e in entries
             ],
@@ -750,19 +947,37 @@ def create_resource():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route("/api/resource", methods=["GET"])
+@jwt_required()
 def list_resources():
     try:
         initialize_rds()
-        email = request.args.get("email")
+        identity = get_jwt_identity()
+        role = (get_jwt() or {}).get("role", "User")
+        req_email = request.args.get("email")
         date_from = request.args.get("date_from")
         date_to = request.args.get("date_to")
         pod_name = request.args.get("pod_name")
 
         query = ResourceTable.query
-        if email:
-            query = query.filter_by(email=email)
-        if pod_name:
-            query = query.filter_by(pod_name=pod_name)
+
+        if role == "User":
+            query = query.filter_by(email=identity)
+        elif role in ("Manager", "Team Lead"):
+            key = user_key_from_email(identity)
+            allowed_pods = TEAM_ACCESS.get(role, {}).get(key, [])
+            if not allowed_pods:
+                return jsonify({"status": "success", "data": []}), 200
+            query = query.filter(ResourceTable.pod_name.in_(allowed_pods))
+            if req_email:
+                query = query.filter_by(email=req_email)
+        elif role in ("Admin", "Internal Admin"):
+            if req_email:
+                query = query.filter_by(email=req_email)
+            elif pod_name:
+                query = query.filter_by(pod_name=pod_name)
+        else:
+            query = query.filter_by(email=identity)
+
         if date_from:
             query = query.filter(ResourceTable.date >= date_from)
         if date_to:
@@ -791,7 +1006,7 @@ def list_resources():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 # -----------------------
-# Old Data + Filters (combined sources) ✅ Public access for now
+# Old Data + Filters (combined sources)
 # -----------------------
 @app.route("/api/daily_activity", methods=["GET"])
 @jwt_required()
@@ -803,10 +1018,6 @@ def get_daily_activity():
         identity = get_jwt_identity()
         claims = get_jwt()
         role = claims.get("role", "User")
-
-        # Allow role/email override via query params for testing (remove in production)
-        role = request.args.get("role", role)
-        identity = request.args.get("email", identity)
 
         # Optional filters
         pod_name = request.args.get("pod_name")
@@ -883,6 +1094,7 @@ def get_daily_activity():
         return jsonify({"status": "error", "message": f"Error fetching data: {str(e)}"}), 500
 
 @app.route("/api/daily_activity/filters", methods=["GET"])
+@jwt_required()
 def get_daily_activity_filters():
     """Get filter values from metadata.json with role-based filtering."""
     try:
@@ -907,19 +1119,22 @@ def get_daily_activity_filters():
         all_tasks = ui_options.get("tasks", [])
         all_pod_names = ui_options.get("podNames", [])
 
-        # Get user info
-        identity = request.args.get("email", "admin@aidash.com")
-        role = request.args.get("role", "Admin")
+        identity = get_jwt_identity()
+        role = (get_jwt() or {}).get("role", "User")
         key = user_key_from_email(identity)
 
-        # Filter POD names based on role
         pod_names = all_pod_names
         if role in ["Manager", "Team Lead"]:
             allowed_pods = TEAM_ACCESS.get(role, {}).get(key, [])
             if not allowed_pods:
                 return jsonify(
-                    {"status": "success",
-                     "data": {"products": [], "projectNames": [], "natureOfWork": [], "tasks": [], "podNames": []}}
+                    {
+                        "products": [],
+                        "projectNames": [],
+                        "natureOfWork": [],
+                        "tasks": [],
+                        "podNames": [],
+                    }
                 ), 200
             pod_names = allowed_pods
 
@@ -989,121 +1204,123 @@ def edit_daily_activity_by_keys():
     db.session.commit()
     return jsonify({"status": "success", "message": "Row updated"}), 200
 
-# --- helpers ---
-def _parse_date(d: str):
-    if not d:
-        return None
-    try:
-        # accept YYYY-MM-DD or full ISO
-        if len(d) == 10:
-            return datetime.fromisoformat(d).replace(tzinfo=timezone.utc)
-        return datetime.fromisoformat(d)
-    except Exception:
-        try:
-            return datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        except Exception:
-            return None
-
 # -----------------------
-# API: Performance (with date filters + role/email scoping)
-# -----------------------
-@app.route("/api/performance", methods=["GET"])
-def api_performance():
-    try:
-        start_date = request.args.get("start_date")
-        end_date = request.args.get("end_date")
-        role = request.args.get("role", "")
-        email = request.args.get("email", "")
-
-        q = DailyTracker.query
-
-        start_dt = _parse_date(start_date)
-        end_dt = _parse_date(end_date)
-        if start_dt:
-            q = q.filter(DailyTracker.submitted_at >= start_dt)
-        if end_dt:
-            q = q.filter(DailyTracker.submitted_at <= (end_dt + timedelta(days=1) - timedelta(seconds=1)))
-
-        # Restrict regular users to their own data
-        if role not in ("Manager", "Admin", "Internal Admin", "Team Lead"):
-            if email:
-                q = q.filter(DailyTracker.email == email)
-            else:
-                return jsonify({"status": "error", "message": "email required for user scope"}), 400
-
-        rows = q.order_by(DailyTracker.submitted_at.desc()).limit(5000).all()
-
-        out = []
-        for r in rows:
-            out.append({
-                "id": r.id,
-                "email": r.email,
-                "product": r.product,
-                "projectName": r.project_name,
-                "natureOfWork": r.nature_of_work,
-                "task": r.task,
-                "hours": float(r.dedicated_hours) if r.dedicated_hours else None,
-                "podName": r.pod_name,
-                "submitted_at": r.submitted_at.isoformat() if r.submitted_at else None
-            })
-
-        return jsonify({"status": "success", "data": out})
-
-    except Exception as e:
-        logger.exception("performance API error")
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-# -----------------------
-# API: Team report (aggregated per-user)
+# API: Team report (POD → individuals, same RBAC as performance)
 # -----------------------
 @app.route("/api/team-report", methods=["GET"])
+@jwt_required()
 def api_team_report():
     try:
+        initialize_rds()
+        identity = get_jwt_identity()
+        role = (get_jwt() or {}).get("role", "User")
+        req_email = request.args.get("email")
+
         start_date = request.args.get("start_date")
         end_date = request.args.get("end_date")
-        role = request.args.get("role", "")
-        email = request.args.get("email", "")
-
-        q = DailyTracker.query
-
         start_dt = _parse_date(start_date)
         end_dt = _parse_date(end_date)
+        # Empty range means all-time data.
+        if start_dt and not end_dt:
+            end_dt = datetime.now(timezone.utc)
+        elif end_dt and not start_dt:
+            start_dt = end_dt - timedelta(days=30)
+
+        q_tracker = DailyTracker.query
+        q_activity = DailyActivity.query
+        allowed_pods = []
+
+        if role == "User":
+            q_tracker = q_tracker.filter(DailyTracker.email == identity)
+            q_activity = q_activity.filter(DailyActivity.email == identity)
+        elif role in ("Manager", "Team Lead"):
+            key = user_key_from_email(identity)
+            allowed_pods = TEAM_ACCESS.get(role, {}).get(key, [])
+            if not allowed_pods:
+                return jsonify({"status": "success", "data": []}), 200
+            q_tracker = q_tracker.filter(DailyTracker.pod_name.in_(allowed_pods))
+            q_activity = q_activity.filter(DailyActivity.pod_name.in_(allowed_pods))
+            if req_email:
+                q_tracker = q_tracker.filter(DailyTracker.email == req_email)
+                q_activity = q_activity.filter(DailyActivity.email == req_email)
+        elif role in ("Admin", "Internal Admin"):
+            if req_email:
+                q_tracker = q_tracker.filter(DailyTracker.email == req_email)
+                q_activity = q_activity.filter(DailyActivity.email == req_email)
+        else:
+            q_tracker = q_tracker.filter(DailyTracker.email == identity)
+            q_activity = q_activity.filter(DailyActivity.email == identity)
+
         if start_dt:
-            q = q.filter(DailyTracker.submitted_at >= start_dt)
+            q_tracker = q_tracker.filter(DailyTracker.submitted_at >= start_dt)
+            q_activity = q_activity.filter(DailyActivity.activity_date >= start_dt)
         if end_dt:
-            q = q.filter(DailyTracker.submitted_at <= (end_dt + timedelta(days=1) - timedelta(seconds=1)))
+            day_end = end_dt + timedelta(days=1) - timedelta(seconds=1)
+            q_tracker = q_tracker.filter(DailyTracker.submitted_at <= day_end)
+            q_activity = q_activity.filter(DailyActivity.activity_date <= day_end)
 
-        # Regular users only see their own aggregated report
-        if role not in ("Manager", "Admin", "Internal Admin", "Team Lead"):
-            if email:
-                q = q.filter(DailyTracker.email == email)
-            else:
-                return jsonify({"status": "error", "message": "email required for user scope"}), 400
+        tracker_rows = q_tracker.order_by(DailyTracker.submitted_at.desc()).limit(10000).all()
+        activity_rows = q_activity.order_by(DailyActivity.activity_date.desc()).limit(10000).all()
 
-        rows = q.order_by(DailyTracker.submitted_at.desc()).all()
+        agg = defaultdict(lambda: defaultdict(lambda: {"entries": 0, "totalHours": 0.0}))
 
-        agg = {}
-        for r in rows:
-            em = r.email or "unknown"
-            if em not in agg:
-                agg[em] = {"email": em, "entries": 0, "totalHours": 0.0}
+        for r in tracker_rows:
+            pod = (r.pod_name or "").strip() or "Unassigned"
+            em = (r.email or "unknown").strip()
             try:
                 h = float(r.dedicated_hours or 0)
             except Exception:
                 h = 0.0
-            agg[em]["entries"] += 1
-            agg[em]["totalHours"] += h
+            agg[pod][em]["entries"] += 1
+            agg[pod][em]["totalHours"] += h
 
-        out = []
-        for v in agg.values():
-            out.append({
-                "email": v["email"],
-                "entries": v["entries"],
-                "totalHours": round(v["totalHours"], 2),
-                "avgDaily": round((v["totalHours"] / v["entries"]) if v["entries"] else 0, 2)
-            })
+        # Include historical old-data rows so pod report is populated across migrated datasets.
+        for r in activity_rows:
+            pod = (r.pod_name or "").strip() or "Unassigned"
+            if allowed_pods and pod not in allowed_pods:
+                continue
+            em = (r.email or "unknown").strip()
+            try:
+                h = float(r.dedicated_hours or 0)
+            except Exception:
+                h = 0.0
+            agg[pod][em]["entries"] += 1
+            agg[pod][em]["totalHours"] += h
 
-        return jsonify({"status": "success", "data": out})
+        emails_flat = {e for members in agg.values() for e in members.keys()}
+        users_by_email = {}
+        if emails_flat:
+            for u in User.query.filter(User.email.in_(list(emails_flat))).all():
+                users_by_email[u.email.lower()] = u
+                users_by_email[u.email] = u
+
+        pods_out = []
+        for pod_name in sorted(agg.keys(), key=lambda x: (1 if x == "Unassigned" else 0, x.lower())):
+            members = []
+            pod_total = 0.0
+            for email_key, v in sorted(agg[pod_name].items(), key=lambda item: -item[1]["totalHours"]):
+                pod_total += v["totalHours"]
+                u = users_by_email.get(email_key.lower()) or users_by_email.get(email_key)
+                display_name = u.name if u else (email_key.split("@")[0] if "@" in email_key else email_key)
+                members.append(
+                    {
+                        "email": email_key,
+                        "name": display_name,
+                        "entries": v["entries"],
+                        "totalHours": round(v["totalHours"], 2),
+                        "avgHoursPerEntry": round((v["totalHours"] / v["entries"]) if v["entries"] else 0, 2),
+                    }
+                )
+            pods_out.append(
+                {
+                    "podName": pod_name,
+                    "podTotalHours": round(pod_total, 2),
+                    "memberCount": len(members),
+                    "members": members,
+                }
+            )
+
+        return jsonify({"status": "success", "data": pods_out})
 
     except Exception as e:
         logger.exception("team-report API error")
@@ -1127,4 +1344,6 @@ def add_cors_headers(response):
 if __name__ == "__main__":
     with app.app_context():
         initialize_rds()
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    # Reloader watches too many paths on Windows (e.g. conda site-packages) → restarts + ECONNRESET on /api.
+    _reload = os.environ.get("FLASK_USE_RELOADER", "").strip().lower() in ("1", "true", "yes")
+    app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=_reload)

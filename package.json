@@ -140,10 +140,10 @@
     ]
   },
   "scripts": {
-    "dev": "cd frontend && npm run dev",
-    "build": "cd frontend && npm run build",
-    "preview": "cd frontend && npm run preview",
-    "install-all": "npm install && cd frontend && npm install && cd ../backend && pip install -r requirements.txt"
+    "dev": "npm run dev --prefix frontend",
+    "build": "npm run build --prefix frontend",
+    "preview": "npm run preview --prefix frontend",
+    "install-all": "npm install && npm install --prefix frontend && pip install -r backend/requirements.txt"
   },
   "devDependencies": {
     "@types/node": "^25.2.0",

@@ -3,7 +3,7 @@ import { X, AlertCircle } from 'lucide-react';
 import ViewContainer from './components/ViewContainer';
 import Sidebar from './components/Sidebar';
 import SearchableSelect from './components/SearchableSelect';
-import { fetchWithAuth } from './utils/api';
+import { API_BASE, fetchWithAuth } from './utils/api';
 import Dashboard from './pages/Dashboard';
 import Tracker from './pages/Tracker';
 import Performance from './pages/Performance';
@@ -12,38 +12,20 @@ import ResourcePlanner from './pages/ResourcePlanner';
 import TeamReport from './pages/TeamReport';
 import TeamControl from './pages/TeamControl';
 
-const API_BASE = (() => {
-  if (typeof window === 'undefined') return '';
-  const { hostname, protocol, port } = window.location;
-  
-  // Helper: check if hostname is IPv4
-  const isIPv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname);
-  
-  // If frontend is on a dev port, backend is usually same host on 5000
-  if ((port === '3000' || port === '5173' || port === '4174' || port === '8080' || port === '4200') && isIPv4) {
-    return `${protocol}//${hostname}:5000`;
-  }
-  
-  // Localhost detection
-  const isLocal = hostname === 'localhost' || hostname === '127.0.0.1' || hostname.startsWith('192.168.') || hostname.startsWith('10.');
-  if (isLocal) return `${protocol}//${hostname}:5000`;
-  
-  return '';
-})();
-
 // Team Structure & Hierarchy
+/** Display-only; backend TEAM_ACCESS / metadata.json use the same POD labels. */
 const TEAM_STRUCTURE = {
   managers: {
-    'manager1': { pods: ['POD-1 (Aryabhata)', 'POD-4 (Gaganyaan)'], teamLeads: ['team_lead_1', 'team_lead_2'] },
-    'manager2': { pods: ['POD-5 (Swift)', 'POD-2 (Crawlers)'], teamLeads: ['team_lead_3', 'team_lead_4'] },
-    'manager3': { pods: ['POD-3 (Marte)', 'POD-6 (Imagery)'], teamLeads: ['team_lead_5', 'team_lead_6'] },
+    'manager1': { pods: ['POD-1 (Aryabhata)', 'POD-2 (Crawlers)'], teamLeads: ['team_lead_1', 'team_lead_2'] },
+    'manager2': { pods: ['POD-3 (Marte)', 'POD-4 (Gaganyaan)'], teamLeads: ['team_lead_3', 'team_lead_4'] },
+    'manager3': { pods: ['POD-5 (Swift)', 'POD-6 (Imagery)'], teamLeads: ['team_lead_5', 'team_lead_6'] },
   },
   teamLeads: {
     'team_lead_1': { pod: 'POD-1 (Aryabhata)', manager: 'manager1' },
-    'team_lead_2': { pod: 'POD-4 (Gaganyaan)', manager: 'manager1' },
-    'team_lead_3': { pod: 'POD-5 (Swift)', manager: 'manager2' },
-    'team_lead_4': { pod: 'POD-2 (Crawlers)', manager: 'manager2' },
-    'team_lead_5': { pod: 'POD-3 (Marte)', manager: 'manager3' },
+    'team_lead_2': { pod: 'POD-2 (Crawlers)', manager: 'manager1' },
+    'team_lead_3': { pod: 'POD-3 (Marte)', manager: 'manager2' },
+    'team_lead_4': { pod: 'POD-4 (Gaganyaan)', manager: 'manager2' },
+    'team_lead_5': { pod: 'POD-5 (Swift)', manager: 'manager3' },
     'team_lead_6': { pod: 'POD-6 (Imagery)', manager: 'manager3' },
   }
 };
@@ -52,9 +34,9 @@ const TEAM_STRUCTURE = {
 const MODERN_INPUT_CLASSES = "w-full px-5 py-4 rounded-xl border border-gray-200 hover:border-gray-400 focus:border-gray-900 focus:bg-white focus:ring-4 focus:ring-gray-100 outline-none font-bold text-sm bg-white transition-all duration-300 placeholder:text-gray-300";
 const MODERN_LABEL_CLASSES = "text-[11px] font-black text-gray-500 uppercase tracking-widest ml-1 mb-2 block transition-colors group-focus-within:text-gray-900";
 
-// Using shared components and `fetchWithAuth` from `./components` and `./utils/api`.
-
+/** Signed-in shell: navbar routes, dashboard metrics, Old Data edit modal. Unauthenticated users see login / forgot / reset. */
 export const App: React.FC = () => {
+  // --- Session: restores user + token from localStorage on first paint ---
   const [currentUser, setCurrentUser] = useState<{email: string, name: string, role: string, id: string} | null>(() => {
     try {
       const s = localStorage.getItem('current_user');
@@ -72,7 +54,7 @@ export const App: React.FC = () => {
   
   const [backendStatus, setBackendStatus] = useState<'unknown' | 'connected' | 'error'>('unknown');
   
-  // Forgot password state
+  // --- Forgot / reset password UI (email link + optional ?reset_token= in URL) ---
   const [showForgot, setShowForgot] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotMsg, setForgotMsg] = useState('');
@@ -83,19 +65,15 @@ export const App: React.FC = () => {
   const [resetMsg, setResetMsg] = useState('');
   const [resetErr, setResetErr] = useState('');
   
-  // User creation state
+  // --- Add-user modal state (reserved; no UI wired in this file yet) ---
   const [showAddUser, setShowAddUser] = useState(false);
   const [newUserForm, setNewUserForm] = useState({ name: '', email: '', password: '', role: 'User' });
-  
-  
-  
-  // Old Data view is delegated to `pages/OldData` which manages its own state/fetching.
-  
-  // Edit modal
+  // --- Old Data: list lives in pages/OldData; this shell opens the edit modal and saves ---
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState('');
+  // --- Edit modal: dropdown source lists from /api/daily_activity/filters ---
   const [filterOptions, setFilterOptions] = useState<any>({
     products: [],
     projectNames: [],
@@ -103,13 +81,14 @@ export const App: React.FC = () => {
     natureOfWork: [],
     podNames: []
   });
-  
   const [dateFilter, setDateFilter] = useState({
     startDate: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0]
   });
-  
+
+  // Load filter option lists for the Old Data edit form (JWT required — do not call on login screen)
   useEffect(() => {
+    if (!currentUser) return;
     const fetchFilters = async () => {
       try {
         const res = await fetchWithAuth('/api/daily_activity/filters');
@@ -128,11 +107,12 @@ export const App: React.FC = () => {
       }
     };
     fetchFilters();
-  }, []);
-  
+  }, [currentUser]);
+
   const openEditModal = (it: any) => { setEditingItem({ ...it }); setEditError(''); setEditModalOpen(true); };
   const closeEditModal = () => { setEditModalOpen(false); setEditingItem(null); setEditError(''); };
-  
+
+  // Persist edits from Old Data modal to PUT /api/daily_activity/edit
   const handleSaveEdit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!editingItem) return;
@@ -152,8 +132,7 @@ export const App: React.FC = () => {
       setEditLoading(false);
     }
   };
-  
-  // Check backend health
+
   const checkHealth = async () => {
     try {
       const controller = new AbortController();
@@ -165,25 +144,28 @@ export const App: React.FC = () => {
       setBackendStatus('error');
     }
   };
-  
+
+  // Ping /api/health on mount and every 15s for the dashboard connectivity badge
   useEffect(() => {
     checkHealth();
     const interval = setInterval(checkHealth, 15000);
     return () => clearInterval(interval);
   }, []);
-  
+
+  // Keep JWT in localStorage in sync with React state
   useEffect(() => {
     if (authToken) localStorage.setItem('access_token', authToken);
     else localStorage.removeItem('access_token');
   }, [authToken]);
-  
+
+  // Persist signed-in user snapshot for refresh (cleared on logout)
   useEffect(() => {
     if (currentUser) {
       localStorage.setItem('current_user', JSON.stringify(currentUser));
     }
   }, [currentUser]);
-  
-  // ✅ Auto-fill reset_token from URL: /?reset_token=xxxx
+
+  // Deep link from email: /?reset_token=... opens reset form
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const t = params.get('reset_token');
@@ -192,9 +174,7 @@ export const App: React.FC = () => {
       setShowForgot(true);
     }
   }, []);
-  
-  // Page components handle their own data fetching and state.
-  
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -213,12 +193,16 @@ export const App: React.FC = () => {
         setLoginError(data.message || 'Login failed');
       }
     } catch (err) {
-      setLoginError(`Network Error: Could not connect to API at ${API_BASE || 'origin'}`);
+      setLoginError(
+        API_BASE
+          ? `Network Error: Could not connect to API at ${API_BASE}`
+          : 'Network Error: Could not reach API. Start the Flask backend on port 5000 (e.g. python app.py in ivms3/backend).'
+      );
     } finally {
       setLoading(false);
     }
   };
-  
+
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setForgotErr('');
@@ -263,10 +247,8 @@ export const App: React.FC = () => {
       setResetErr(err.message || 'Error');
     }
   };
-  
-  // Page components manage their own submissions, users, and performance calculations.
 
-  // Dashboard metrics - compute weekly hours by fetching last 7 days of activities
+  // --- Dashboard: last-7-days dedicated hours vs 40h target (feeds home progress UI) ---
   const [weeklyHours, setWeeklyHours] = useState<number>(0);
   const [weeklyLoading, setWeeklyLoading] = useState<boolean>(false);
 
@@ -328,8 +310,8 @@ export const App: React.FC = () => {
 
   const remainingHours = Math.max(0, 40 - weeklyHours);
   const weeklyProgressPercent = weeklyHours > 0 ? Math.min(100, Math.round((weeklyHours / 40) * 100)) : 0;
-  
-  // LOGIN VIEW
+
+  // Unauthenticated: full-screen CORE login, forgot email, or reset-password form
   if (!currentUser) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 flex items-center justify-center">
@@ -421,9 +403,8 @@ export const App: React.FC = () => {
       </div>
     );
   }
-  
-  // MAIN APP VIEW
-  
+
+  // Authenticated: sidebar + routed page inside ViewContainer; modal overlays Old Data edits
   return (
     <div className="min-h-screen bg-[#fafbfc] flex text-gray-900 font-sans">
       <Sidebar 
@@ -447,8 +428,8 @@ export const App: React.FC = () => {
           </ViewContainer>
         </div>
       </main>
-      
-      {/* Edit Modal */}
+
+      {/* Old Data: full-screen modal to edit a row; uses filterOptions + PUT save */}
       {editModalOpen && editingItem && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl p-8 max-w-2xl w-full mx-4 shadow-2xl max-h-[90vh] overflow-y-auto">

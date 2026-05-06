@@ -21,24 +21,21 @@ const Performance: React.FC<any> = ({ currentUser }) => {
       const params = new URLSearchParams();
       if (startDate) params.append('start_date', startDate);
       if (endDate) params.append('end_date', endDate);
-      
-      // Always include role so the backend knows the requester role
-      if (currentUser?.role) params.append('role', currentUser.role);
 
-      // Append email param when appropriate:
-      // - If selectedEmail is set, use it (Admin/Manager inspection)
-      // - If current user is a regular User, force their email
       if (selectedEmail) {
         params.append('email', selectedEmail);
-      } else if ((currentUser?.role || 'User') === 'User' && currentUser?.email) {
-        params.append('email', currentUser.email);
       }
 
       const res = await fetchWithAuth(`/api/performance?${params.toString()}`);
       if (!res.ok) throw new Error('Failed to fetch');
       
       const result = await res.json();
-      const all: PerfRecord[] = Array.isArray(result.data) ? result.data : [];
+      const raw = Array.isArray(result.data) ? result.data : [];
+      const all: PerfRecord[] = raw.map((row: Record<string, unknown>) => ({
+        ...row,
+        submittedAt: (row.submittedAt || row.submitted_at) as string | undefined,
+        dedicatedHours: (row.dedicatedHours ?? row.hours) as string | undefined,
+      }));
       // Apply client-side restriction only for plain Users; Admin/Manager may inspect all or a selected user
       let filtered: PerfRecord[] = all;
       if (currentUser) {

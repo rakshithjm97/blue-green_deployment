@@ -1,4 +1,6 @@
-version: '3.8'
+# Local DB (from host: pgAdmin, psql, etc.):  Host localhost | Port 5432
+#   Maintenance DB postgres | Username postgres | Password password (below)
+# The Flask container uses host "db" (service name), not localhost.
 services:
   app:
     build: .
@@ -18,7 +20,7 @@ services:
       - ./backend:/app/backend:ro
 
   db:
-    image: postgres:15
+    image: postgres:16
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres

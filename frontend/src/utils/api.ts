@@ -1,11 +1,16 @@
 export const getApiBase = (): string => {
   if (typeof window === 'undefined') return '';
-  const { hostname, protocol } = window.location;
-  const apiBase = import.meta.env.VITE_API_URL;
+  const apiBase = import.meta.env.VITE_API_URL?.trim?.();
   if (apiBase) return apiBase;
-  if (hostname === 'localhost' || hostname.startsWith('192.') || hostname.startsWith('10.') || hostname === '127.0.0.1') {
-    return `${protocol}//${hostname}:5000`;
-  }
+  const { hostname, protocol } = window.location;
+  const isLocal =
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    /^10\.\d+\.\d+\.\d+$/.test(hostname) ||
+    /^192\.168\.\d+\.\d+$/.test(hostname);
+  // Dev: same-origin `/api/*` uses `server.proxy` in vite.config.ts (backend still must run on :5000).
+  if (import.meta.env.DEV && isLocal) return '';
+  if (isLocal) return `${protocol}//${hostname}:5000`;
   return '';
 };
 
@@ -20,6 +25,9 @@ export const fetchWithAuth = async (path: string, init?: RequestInit) => {
   let res = await fetch(fullUrl, { ...(init || {}), headers: baseHeaders });
 
   if (res.status !== 401) return res;
+
+  // No session was sent — let the caller handle 401 (e.g. login page) without wiping storage / reload loop
+  if (!token) return res;
 
   // Try silent refresh using stored refresh token
   const refreshToken = typeof window !== 'undefined' ? localStorage.getItem('refresh_token') : null;

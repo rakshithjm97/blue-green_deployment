@@ -9,5 +9,8 @@ export type PerfRecord = {
   dedicatedHours?: string;
   hours?: string;
   podName?: string;
+  /** Daily tracker / performance API */
   submittedAt?: string;
+  /** Old Data (daily_activity) API */
+  activityDate?: string;
 };

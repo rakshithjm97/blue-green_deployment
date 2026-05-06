@@ -43,8 +43,8 @@ const OldData: React.FC<any> = ({ currentUser, onEdit }) => {
 
         // Request: scope to current user for non-admins so regular users don't see other people's entries
         let url = `/api/daily_activity`;
-        const nonAdminRoles = ['Admin', 'Internal Admin'];
-        if (!nonAdminRoles.includes(currentUser?.role || '')) {
+        const adminRoles = ['Admin', 'Internal Admin'];
+        if (!adminRoles.includes(currentUser?.role || '')) {
           const qs = new URLSearchParams();
           if (currentUser?.email) qs.append('email', currentUser.email);
           const q = qs.toString();
@@ -72,9 +72,10 @@ const OldData: React.FC<any> = ({ currentUser, onEdit }) => {
     fetchOldData();
   }, [currentUser]);
 
+  const rowTimestamp = (item: PerfRecord) => item.submittedAt || item.activityDate;
+
   const normalizeDate = (iso?: string) => {
     if (!iso) return "";
-    // expects ISO like 2026-01-30T...
     return iso.split("T")[0] || "";
   };
 
@@ -108,7 +109,7 @@ const OldData: React.FC<any> = ({ currentUser, onEdit }) => {
       if (filters.nature && item.natureOfWork !== filters.nature) return false;
       if (filters.task && item.task !== filters.task) return false;
 
-      const itemDate = normalizeDate(item.submittedAt);
+      const itemDate = normalizeDate(rowTimestamp(item));
 
       if (filters.fromDate && itemDate && itemDate < filters.fromDate) return false;
       if (filters.toDate && itemDate && itemDate > filters.toDate) return false;
@@ -333,8 +334,9 @@ const OldData: React.FC<any> = ({ currentUser, onEdit }) => {
                 </tr>
               ) : (
                 displayedData.map((item: any, idx: number) => {
-                  const submittedAt = item.submittedAt ? new Date(item.submittedAt).toLocaleString() : "-";
-                  const key = item.id || `${item.email}-${item.submittedAt}-${idx}`;
+                  const ts = rowTimestamp(item);
+                  const submittedAt = ts ? new Date(ts).toLocaleString() : "-";
+                  const key = item.id || `${item.email}-${ts}-${idx}`;
 
                   return (
                     <tr

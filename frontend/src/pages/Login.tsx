@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { getApiBase } from '../utils/api';
 
 const Login: React.FC<{ onLogin: (user: any) => void }> = ({ onLogin }) => {
   const [email, setEmail] = useState('admin@aidash.com');
@@ -12,7 +13,7 @@ const Login: React.FC<{ onLogin: (user: any) => void }> = ({ onLogin }) => {
     setError('');
     
     try {
-      const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+      const apiBase = getApiBase();
       const res = await fetch(`${apiBase}/api/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
