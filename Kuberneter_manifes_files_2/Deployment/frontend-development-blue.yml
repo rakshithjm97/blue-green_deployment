@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: 
+ name: frontend-blue
+ namespace: webapps
+ labels:
+  app: frontend
+  version: blue
+spec:
+ replicas: 2
+ stratergy:
+  type: RollingUpdate
+  rollingUpdate:
+   maxSurge: 1
+   maxUnavilable: 25%
+ selectors:
+  matchLabels:
+   app: frontend
+   version: blue
+ template:
+  metadata:
+   labels:
+    app: frontend
+    verion: blue
+  spec:
+   serviceAccountName: jenkins
+   imagePullSecrets:
+   - name: ecr-regestry-secret
+   containers:
+   - name: frontend
+     image:  091008253157.dkr.ecr.us-east-1.amazonaws.com/todoapp-frontend:blue
+     imagePullPolicy: always
+     env:
+       - name: REACT_APP_BACKEND_URL
+         values: "http://backend-svc:3500/api/tasks"
+     ports:
+     - containderPort: 3000
