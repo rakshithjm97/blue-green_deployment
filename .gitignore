@@ -12,3 +12,7 @@ build/
 
 # Logs
 npm-debug.log*
+
+.terraform/
+*.tfstate
+*.tfstate.backup
