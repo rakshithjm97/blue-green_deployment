@@ -6,7 +6,7 @@ pipeline{
     
     parameters{
         choice(name: 'DEPLOY_ENV', choices: ['blue','green'], description: 'Choose which environment to deploy : Blue or Grenn')
-        choice(name: 'DOCKER_TAG', choices: ['blue','green'], description: 'choose the docker image tag for deploymnet')
+        choice(name: 'DOCKER_TAG', actions: ['blue','green'], description: 'choose the docker image tag for deploymnet')
         booleanParam(name: 'SWITCH_TRAFFIC', defaultValue: false, description: 'Switch traffic betwen Blua and green')
 
     }
@@ -312,7 +312,6 @@ pipeline{
             }
         }
     }
-}
 
 
 
@@ -332,7 +331,8 @@ pipeline{
 
 
 
-    }
+
+    
 
 
    
@@ -358,4 +358,3 @@ pipeline{
 
 
 
-}
