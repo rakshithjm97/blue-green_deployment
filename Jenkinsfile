@@ -43,12 +43,12 @@ pipeline {
                                 def scannerHome = tool 'sonar-scanner'
 
                                 withSonarQubeEnv('sonar-server') {
-                                 sh '''
+                                 sh """
                                      $SCANNER_HOME/bin/sonar-scanner \
                                          -Dsonar.projectName=frontend \
                                          -Dsonar.projectKey=frontend \
                                          -Dsonar.sources=.
-                                '''
+                                """
                                 }
                             }
 
@@ -63,12 +63,13 @@ pipeline {
                             script{
                                     def scannerHome = tool 'sonar-scanner'
                                     withSonarQubeEnv('sonar-server') {
-                                    sh '''
-                                    $SCANNER_HOME/bin/sonar-scanner \
-                                        -Dsonar.projectName=backend \
-                                        -Dsonar.projectKey=backend \
-                                        -Dsonar.sources=.
-                                    '''
+                                    sh """
+
+                                        $SCANNER_HOME/bin/sonar-scanner \
+                                          -Dsonar.projectName=backend \
+                                          -Dsonar.projectKey=backend \
+                                          -Dsonar.sources=.
+                                    """
                                 }
                             }
 
