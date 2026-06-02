@@ -8,7 +8,7 @@ pipeline {
     }
 
     environment {
-        SCANNER_HOME = tool 'sonar-scanner'
+        
         TAG = "${params.DOCKER_TAG}"
         KUBE_NAMESPACE = 'webapps'
         AWS_ACCOUNT_ID = credentials('ACCOUNT_ID')
@@ -36,32 +36,42 @@ pipeline {
             parallel {
                 stage('SonarQube frontend analysis') {
                     steps {
-                        def scannerHome = tool 'sonar-scanner'
-                        dir('frontend') {
-                            withSonarQubeEnv('sonar-server') {
-                                sh '''
-                                    $SCANNER_HOME/bin/sonar-scanner \
-                                        -Dsonar.projectName=frontend \
-                                        -Dsonar.projectKey=frontend \
-                                        -Dsonar.sources=.
+                         
+                         
+                         dir('frontend') {
+                            script{
+                                def scannerHome = tool 'sonar-scanner'
+
+                                withSonarQubeEnv('sonar-server') {
+                                 sh '''
+                                     $SCANNER_HOME/bin/sonar-scanner \
+                                         -Dsonar.projectName=frontend \
+                                         -Dsonar.projectKey=frontend \
+                                         -Dsonar.sources=.
                                 '''
+                                }
                             }
+
                         }
                     }
                 }
 
                 stage('SonarQube backend analysis') {
                     steps {
-                        def scannerHome = tool 'sonar-scanner'
+                        
                         dir('backend') {
-                            withSonarQubeEnv('sonar-server') {
-                                sh '''
+                            script{
+                                    def scannerHome = tool 'sonar-scanner'
+                                    withSonarQubeEnv('sonar-server') {
+                                    sh '''
                                     $SCANNER_HOME/bin/sonar-scanner \
                                         -Dsonar.projectName=backend \
                                         -Dsonar.projectKey=backend \
                                         -Dsonar.sources=.
-                                '''
+                                    '''
+                                }
                             }
+
                         }
                     }
                 }
