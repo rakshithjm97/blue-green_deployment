@@ -162,29 +162,33 @@ pipeline {
             parallel {
                 stage('Build and push frontend image') {
                     steps {
-                        sh '''
-                            USED_DISK_SPACE=$(df / | tail -1 | awk '{print $5}' | sed 's/%//')
-                            if [ "$USED_DISK_SPACE" -gt 80 ]; then
-                                echo "Disk space is above 80%, running docker prune"
-                                docker system prune -f
-                                docker container prune -f
-                            else
-                                echo "Disk space is below 80%, skipping prune"
-                            fi
-                        '''
-                        sh 'docker build -t ${AWS_ECR_FRONTEND_REPO_NAME}:${TAG} -f ./frontend/Dockerfile ./frontend'
-                        sh 'docker tag ${AWS_ECR_FRONTEND_REPO_NAME}:${TAG} ${REPOSITORY_URL}/${AWS_ECR_FRONTEND_REPO_NAME}:${TAG}'
-                        sh 'aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${REPOSITORY_URL}'
-                        sh 'docker push ${REPOSITORY_URL}/${AWS_ECR_FRONTEND_REPO_NAME}:${TAG}'
+                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                            sh '''
+                                USED_DISK_SPACE=$(df / | tail -1 | awk '{print $5}' | sed 's/%//')
+                                if [ "$USED_DISK_SPACE" -gt 80 ]; then
+                                    echo "Disk space is above 80%, running docker prune"
+                                    docker system prune -f
+                                    docker container prune -f
+                                else
+                                    echo "Disk space is below 80%, skipping prune"
+                                fi
+                            '''
+                            sh 'docker build -t ${AWS_ECR_FRONTEND_REPO_NAME}:${TAG} -f ./frontend/Dockerfile ./frontend'
+                            sh 'docker tag ${AWS_ECR_FRONTEND_REPO_NAME}:${TAG} ${REPOSITORY_URL}/${AWS_ECR_FRONTEND_REPO_NAME}:${TAG}'
+                            sh 'aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${REPOSITORY_URL}'
+                            sh 'docker push ${REPOSITORY_URL}/${AWS_ECR_FRONTEND_REPO_NAME}:${TAG}'
+                        }
                     }
                 }
 
                 stage('Build and push backend image') {
                     steps {
-                        sh 'docker build -t ${AWS_ECR_BACKEND_REPO_NAME}:${TAG} -f ./backend/Dockerfile ./backend'
-                        sh 'docker tag ${AWS_ECR_BACKEND_REPO_NAME}:${TAG} ${REPOSITORY_URL}/${AWS_ECR_BACKEND_REPO_NAME}:${TAG}'
-                        sh 'aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${REPOSITORY_URL}'
-                        sh 'docker push ${REPOSITORY_URL}/${AWS_ECR_BACKEND_REPO_NAME}:${TAG}'
+                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                            sh 'docker build -t ${AWS_ECR_BACKEND_REPO_NAME}:${TAG} -f ./backend/Dockerfile ./backend'
+                            sh 'docker tag ${AWS_ECR_BACKEND_REPO_NAME}:${TAG} ${REPOSITORY_URL}/${AWS_ECR_BACKEND_REPO_NAME}:${TAG}'
+                            sh 'aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${REPOSITORY_URL}'
+                            sh 'docker push ${REPOSITORY_URL}/${AWS_ECR_BACKEND_REPO_NAME}:${TAG}'
+                        }
                     }
                 }
             }
