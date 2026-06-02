@@ -36,6 +36,7 @@ pipeline {
             parallel {
                 stage('SonarQube frontend analysis') {
                     steps {
+                        def scannerHome = tool 'sonar-scanner'
                         dir('frontend') {
                             withSonarQubeEnv('sonar-server') {
                                 sh '''
@@ -51,6 +52,7 @@ pipeline {
 
                 stage('SonarQube backend analysis') {
                     steps {
+                        def scannerHome = tool 'sonar-scanner'
                         dir('backend') {
                             withSonarQubeEnv('sonar-server') {
                                 sh '''
