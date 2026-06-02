@@ -41,7 +41,8 @@ pipeline {
                                 sh '''
                                     $SCANNER_HOME/bin/sonar-scanner \
                                         -Dsonar.projectName=frontend \
-                                        -Dsonar.projectKey=frontend
+                                        -Dsonar.projectKey=frontend \
+                                        -Dsonar.sources=.
                                 '''
                             }
                         }
@@ -55,7 +56,8 @@ pipeline {
                                 sh '''
                                     $SCANNER_HOME/bin/sonar-scanner \
                                         -Dsonar.projectName=backend \
-                                        -Dsonar.projectKey=backend
+                                        -Dsonar.projectKey=backend \
+                                        -Dsonar.sources=.
                                 '''
                             }
                         }
