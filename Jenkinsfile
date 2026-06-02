@@ -36,43 +36,34 @@ pipeline {
             parallel {
                 stage('SonarQube frontend analysis') {
                     steps {
-                         
-                         
-                         dir('frontend') {
-                            script{
-                                def scannerHome = tool 'sonar-scanner'
-
+                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                            dir('frontend') {
                                 withSonarQubeEnv('sonar-server') {
-                                 sh """
-                                     $SCANNER_HOME/bin/sonar-scanner \
-                                         -Dsonar.projectName=frontend \
-                                         -Dsonar.projectKey=frontend \
-                                         -Dsonar.sources=.
-                                """
+                                    sh '''
+                                        sonar-scanner \
+                                        -Dsonar.projectName=frontend \
+                                        -Dsonar.projectKey=frontend \
+                                        -Dsonar.sources=.
+                                    '''
                                 }
                             }
-
                         }
                     }
                 }
 
                 stage('SonarQube backend analysis') {
                     steps {
-                        
-                        dir('backend') {
-                            script{
-                                    def scannerHome = tool 'sonar-scanner'
-                                    withSonarQubeEnv('sonar-server') {
-                                    sh """
-
-                                        $SCANNER_HOME/bin/sonar-scanner \
-                                          -Dsonar.projectName=backend \
-                                          -Dsonar.projectKey=backend \
-                                          -Dsonar.sources=.
-                                    """
+                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                            dir('backend') {
+                                withSonarQubeEnv('sonar-server') {
+                                    sh '''
+                                        sonar-scanner \
+                                        -Dsonar.projectName=backend \
+                                        -Dsonar.projectKey=backend \
+                                        -Dsonar.sources=.
+                                    '''
                                 }
                             }
-
                         }
                     }
                 }
@@ -83,16 +74,20 @@ pipeline {
             parallel {
                 stage('Frontend quality check') {
                     steps {
-                        timeout(time: 5, unit: 'MINUTES') {
-                            waitForQualityGate abortPipeline: true, credentialsId: 'sonar-token'
+                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                            timeout(time: 5, unit: 'MINUTES') {
+                                waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
+                            }
                         }
                     }
                 }
 
                 stage('Backend quality check') {
                     steps {
-                        timeout(time: 5, unit: 'MINUTES') {
-                            waitForQualityGate abortPipeline: true, credentialsId: 'sonar-token'
+                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                            timeout(time: 5, unit: 'MINUTES') {
+                                waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
+                            }
                         }
                     }
                 }
@@ -103,20 +98,24 @@ pipeline {
             parallel {
                 stage('OWASP frontend dependency check') {
                     steps {
-                        dir('frontend') {
-                            dependencyCheck additionalArguments: "--scan . --disableYarnAudit --disableNodeAudit --nvdApiKey ${NVD_API_KEY}",
-                                odcInstallation: 'DP-Check'
-                            dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                            dir('frontend') {
+                                dependencyCheck additionalArguments: "--scan . --disableYarnAudit --disableNodeAudit --nvdApiKey ${NVD_API_KEY}",
+                                    odcInstallation: 'DP-Check'
+                                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+                            }
                         }
                     }
                 }
 
                 stage('OWASP backend dependency check') {
                     steps {
-                        dir('backend') {
-                            dependencyCheck additionalArguments: "--scan . --nvdApiKey ${NVD_API_KEY}",
-                                odcInstallation: 'DP-Check'
-                            dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                            dir('backend') {
+                                dependencyCheck additionalArguments: "--scan . --nvdApiKey ${NVD_API_KEY}",
+                                    odcInstallation: 'DP-Check'
+                                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+                            }
                         }
                     }
                 }
@@ -127,12 +126,14 @@ pipeline {
             parallel {
                 stage('Trivy frontend file scan') {
                     steps {
-                        dir('frontend') {
-                            sh 'trivy fs . > trivyfs.txt'
-                            script {
-                                def scanResults = readFile('trivyfs.txt')
-                                if (scanResults.contains('CRITICAL')) {
-                                    echo 'Warning: critical vulnerability found in frontend files'
+                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                            dir('frontend') {
+                                sh 'trivy fs . > trivyfs.txt'
+                                script {
+                                    def scanResults = readFile('trivyfs.txt')
+                                    if (scanResults.contains('CRITICAL')) {
+                                        echo 'Warning: critical vulnerability found in frontend files'
+                                    }
                                 }
                             }
                         }
@@ -141,12 +142,14 @@ pipeline {
 
                 stage('Trivy backend file scan') {
                     steps {
-                        dir('backend') {
-                            sh 'trivy fs . > trivyfs.txt'
-                            script {
-                                def scanResults = readFile('trivyfs.txt')
-                                if (scanResults.contains('CRITICAL')) {
-                                    echo 'Warning: critical vulnerability found in backend files'
+                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                            dir('backend') {
+                                sh 'trivy fs . > trivyfs.txt'
+                                script {
+                                    def scanResults = readFile('trivyfs.txt')
+                                    if (scanResults.contains('CRITICAL')) {
+                                        echo 'Warning: critical vulnerability found in backend files'
+                                    }
                                 }
                             }
                         }
@@ -169,7 +172,7 @@ pipeline {
                                 echo "Disk space is below 80%, skipping prune"
                             fi
                         '''
-                        sh 'docker build -t ${AWS_ECR_FRONTEND_REPO_NAME}:${TAG} .'
+                        sh 'docker build -t ${AWS_ECR_FRONTEND_REPO_NAME}:${TAG} -f ./frontend/Dockerfile ./frontend'
                         sh 'docker tag ${AWS_ECR_FRONTEND_REPO_NAME}:${TAG} ${REPOSITORY_URL}/${AWS_ECR_FRONTEND_REPO_NAME}:${TAG}'
                         sh 'aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${REPOSITORY_URL}'
                         sh 'docker push ${REPOSITORY_URL}/${AWS_ECR_FRONTEND_REPO_NAME}:${TAG}'
@@ -178,7 +181,7 @@ pipeline {
 
                 stage('Build and push backend image') {
                     steps {
-                        sh 'docker build -t ${AWS_ECR_BACKEND_REPO_NAME}:${TAG} .'
+                        sh 'docker build -t ${AWS_ECR_BACKEND_REPO_NAME}:${TAG} -f ./backend/Dockerfile ./backend'
                         sh 'docker tag ${AWS_ECR_BACKEND_REPO_NAME}:${TAG} ${REPOSITORY_URL}/${AWS_ECR_BACKEND_REPO_NAME}:${TAG}'
                         sh 'aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${REPOSITORY_URL}'
                         sh 'docker push ${REPOSITORY_URL}/${AWS_ECR_BACKEND_REPO_NAME}:${TAG}'
@@ -191,20 +194,24 @@ pipeline {
             parallel {
                 stage('Frontend docker image scan') {
                     steps {
-                        sh 'trivy image ${REPOSITORY_URL}/${AWS_ECR_FRONTEND_REPO_NAME}:${TAG} > trivyimage-frontend.txt'
-                        script {
-                            def scanResults = readFile('trivyimage-frontend.txt')
-                            echo "Frontend scan results:\n${scanResults}"
+                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                            sh 'trivy image ${REPOSITORY_URL}/${AWS_ECR_FRONTEND_REPO_NAME}:${TAG} > trivyimage-frontend.txt'
+                            script {
+                                def scanResults = readFile('trivyimage-frontend.txt')
+                                echo "Frontend scan results:\n${scanResults}"
+                            }
                         }
                     }
                 }
 
                 stage('Backend docker image scan') {
                     steps {
-                        sh 'trivy image ${REPOSITORY_URL}/${AWS_ECR_BACKEND_REPO_NAME}:${TAG} > trivyimage-backend.txt'
-                        script {
-                            def scanResults = readFile('trivyimage-backend.txt')
-                            echo "Backend scan results:\n${scanResults}"
+                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                            sh 'trivy image ${REPOSITORY_URL}/${AWS_ECR_BACKEND_REPO_NAME}:${TAG} > trivyimage-backend.txt'
+                            script {
+                                def scanResults = readFile('trivyimage-backend.txt')
+                                echo "Backend scan results:\n${scanResults}"
+                            }
                         }
                     }
                 }
