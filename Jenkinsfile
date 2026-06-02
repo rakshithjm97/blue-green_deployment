@@ -225,45 +225,51 @@ pipeline {
 
         stage('Deploy MongoDB and service') {
             steps {
-                dir('Kubernetes-Manifests-file') {
-                    sh 'aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}'
-                    sh 'kubectl apply -f Database -n ${KUBE_NAMESPACE}'
+                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                    dir('Kubernetes-Manifests-file') {
+                        sh 'aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}'
+                        sh 'kubectl apply -f Database -n ${KUBE_NAMESPACE}'
+                    }
                 }
             }
         }
 
         stage('Deploy Frontend and Backend Services') {
             steps {
-                dir('Kubernetes-Manifests-file/Service') {
-                    sh '''
-                        aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}
-                        kubectl apply -f backend-svc.yml --force -n ${KUBE_NAMESPACE}
-                        kubectl apply -f frontend-svc.yml --force -n ${KUBE_NAMESPACE}
-                        sleep 20
-                    '''
+                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                    dir('Kubernetes-Manifests-file/Service') {
+                        sh '''
+                            aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}
+                            kubectl apply -f backend-svc.yml --force -n ${KUBE_NAMESPACE}
+                            kubectl apply -f frontend-svc.yml --force -n ${KUBE_NAMESPACE}
+                            sleep 20
+                        '''
+                    }
                 }
             }
         }
 
         stage('Deploy to Kubernetes') {
             steps {
-                dir('Kubernetes-Manifests-file/Deployment') {
-                    script {
-                        def deploymentFrontend = ''
-                        def deploymentBackend = ''
+                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                    dir('Kubernetes-Manifests-file/Deployment') {
+                        script {
+                            def deploymentFrontend = ''
+                            def deploymentBackend = ''
 
-                        if (params.DEPLOY_ENV == 'blue') {
-                            deploymentFrontend = 'frontend-deployment-blue.yml'
-                            deploymentBackend = 'backend-deployment-blue.yml'
-                        } else {
-                            deploymentFrontend = 'frontend-deployment-green.yml'
-                            deploymentBackend = 'backend-deployment-green.yml'
+                            if (params.DEPLOY_ENV == 'blue') {
+                                deploymentFrontend = 'frontend-deployment-blue.yml'
+                                deploymentBackend = 'backend-deployment-blue.yml'
+                            } else {
+                                deploymentFrontend = 'frontend-deployment-green.yml'
+                                deploymentBackend = 'backend-deployment-green.yml'
+                            }
+
+                            sh 'aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}'
+                            sh "kubectl apply -f ${deploymentBackend} --record -n ${KUBE_NAMESPACE}"
+                            sh "kubectl apply -f ${deploymentFrontend} --record -n ${KUBE_NAMESPACE}"
+                            sh 'sleep 20'
                         }
-
-                        sh 'aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}'
-                        sh "kubectl apply -f ${deploymentBackend} --record -n ${KUBE_NAMESPACE}"
-                        sh "kubectl apply -f ${deploymentFrontend} --record -n ${KUBE_NAMESPACE}"
-                        sh 'sleep 20'
                     }
                 }
             }
@@ -275,31 +281,35 @@ pipeline {
             }
 
             steps {
-                script {
-                    def newEnv = params.DEPLOY_ENV
+                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                    script {
+                        def newEnv = params.DEPLOY_ENV
 
-                    sh '''
-                        aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}
-                        kubectl patch svc backend-svc -p '{"spec": {"selector": {"app": "backend", "version": "${newEnv}"}}}' -n ${KUBE_NAMESPACE}
-                        kubectl patch svc frontend-svc -p '{"spec": {"selector": {"app": "frontend", "version": "${newEnv}"}}}' -n ${KUBE_NAMESPACE}
-                    '''
+                        sh '''
+                            aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}
+                            kubectl patch svc backend-svc -p '{"spec": {"selector": {"app": "backend", "version": "${newEnv}"}}}' -n ${KUBE_NAMESPACE}
+                            kubectl patch svc frontend-svc -p '{"spec": {"selector": {"app": "frontend", "version": "${newEnv}"}}}' -n ${KUBE_NAMESPACE}
+                        '''
 
-                    echo "Traffic has been switched successfully to the ${newEnv} environment"
+                        echo "Traffic has been switched successfully to the ${newEnv} environment"
+                    }
                 }
             }
         }
 
         stage('Verify Deployment') {
             steps {
-                script {
-                    def verifyEnv = params.DEPLOY_ENV
+                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                    script {
+                        def verifyEnv = params.DEPLOY_ENV
 
-                    sh '''
-                        aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}
-                        kubectl get pods -l version=${verifyEnv} -n ${KUBE_NAMESPACE}
-                        kubectl get svc backend-svc -n ${KUBE_NAMESPACE}
-                        kubectl get svc frontend-svc -n ${KUBE_NAMESPACE}
-                    '''
+                        sh '''
+                            aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}
+                            kubectl get pods -l version=${verifyEnv} -n ${KUBE_NAMESPACE}
+                            kubectl get svc backend-svc -n ${KUBE_NAMESPACE}
+                            kubectl get svc frontend-svc -n ${KUBE_NAMESPACE}
+                        '''
+                    }
                 }
             }
         }
