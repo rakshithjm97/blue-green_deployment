@@ -225,10 +225,8 @@ pipeline {
         stage('Deploy MongoDB and service') {
             steps {
                 dir('Kubernetes-Manifests-file') {
-                    withKubeConfig(caCertificate: '', clusterName: 'bg-cluster', credentialsId: 'k8-cred', namespace: 'webapps', restrictKubeConfigAccess: false, serverUrl: 'https://EFCD6C924B0CADA4EF47D2E578265EFC.gr7.us-east-1.eks.amazonaws.com') {
-                        sh 'aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}'
-                        sh 'kubectl apply -f Database -n ${KUBE_NAMESPACE}'
-                    }
+                    sh 'aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}'
+                    sh 'kubectl apply -f Database -n ${KUBE_NAMESPACE}'
                 }
             }
         }
@@ -236,13 +234,12 @@ pipeline {
         stage('Deploy Frontend and Backend Services') {
             steps {
                 dir('Kubernetes-Manifests-file/Service') {
-                    withKubeConfig(caCertificate: '', clusterName: 'bg-cluster', credentialsId: 'k8-cred', namespace: 'webapps', restrictKubeConfigAccess: false, serverUrl: 'https://EFCD6C924B0CADA4EF47D2E578265EFC.gr7.us-east-1.eks.amazonaws.com') {
-                        sh '''
-                            kubectl apply -f backend-svc.yml --force -n ${KUBE_NAMESPACE}
-                            kubectl apply -f frontend-svc.yml --force -n ${KUBE_NAMESPACE}
-                            sleep 20
-                        '''
-                    }
+                    sh '''
+                        aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}
+                        kubectl apply -f backend-svc.yml --force -n ${KUBE_NAMESPACE}
+                        kubectl apply -f frontend-svc.yml --force -n ${KUBE_NAMESPACE}
+                        sleep 20
+                    '''
                 }
             }
         }
@@ -262,11 +259,10 @@ pipeline {
                             deploymentBackend = 'backend-deployment-green.yml'
                         }
 
-                        withKubeConfig(caCertificate: '', clusterName: 'bg-cluster', credentialsId: 'k8-cred', namespace: 'webapps', restrictKubeConfigAccess: false, serverUrl: 'https://EFCD6C924B0CADA4EF47D2E578265EFC.gr7.us-east-1.eks.amazonaws.com') {
-                            sh "kubectl apply -f ${deploymentBackend} --record -n ${KUBE_NAMESPACE}"
-                            sh "kubectl apply -f ${deploymentFrontend} --record -n ${KUBE_NAMESPACE}"
-                            sh 'sleep 20'
-                        }
+                        sh 'aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}'
+                        sh "kubectl apply -f ${deploymentBackend} --record -n ${KUBE_NAMESPACE}"
+                        sh "kubectl apply -f ${deploymentFrontend} --record -n ${KUBE_NAMESPACE}"
+                        sh 'sleep 20'
                     }
                 }
             }
@@ -281,12 +277,11 @@ pipeline {
                 script {
                     def newEnv = params.DEPLOY_ENV
 
-                    withKubeConfig(caCertificate: '', clusterName: 'bg-cluster', credentialsId: 'k8-cred', namespace: 'webapps', restrictKubeConfigAccess: false, serverUrl: 'https://EFCD6C924B0CADA4EF47D2E578265EFC.gr7.us-east-1.eks.amazonaws.com') {
-                        sh """
-                            kubectl patch svc backend-svc -p '{"spec": {"selector": {"app": "backend", "version": "${newEnv}"}}}' -n ${KUBE_NAMESPACE}
-                            kubectl patch svc frontend-svc -p '{"spec": {"selector": {"app": "frontend", "version": "${newEnv}"}}}' -n ${KUBE_NAMESPACE}
-                        """
-                    }
+                    sh '''
+                        aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}
+                        kubectl patch svc backend-svc -p '{"spec": {"selector": {"app": "backend", "version": "${newEnv}"}}}' -n ${KUBE_NAMESPACE}
+                        kubectl patch svc frontend-svc -p '{"spec": {"selector": {"app": "frontend", "version": "${newEnv}"}}}' -n ${KUBE_NAMESPACE}
+                    '''
 
                     echo "Traffic has been switched successfully to the ${newEnv} environment"
                 }
@@ -298,11 +293,12 @@ pipeline {
                 script {
                     def verifyEnv = params.DEPLOY_ENV
 
-                    withKubeConfig(caCertificate: '', clusterName: 'bg-cluster', credentialsId: 'k8-cred', namespace: 'webapps', restrictKubeConfigAccess: false, serverUrl: 'https://EFCD6C924B0CADA4EF47D2E578265EFC.gr7.us-east-1.eks.amazonaws.com') {
-                        sh "kubectl get pods -l version=${verifyEnv} -n ${KUBE_NAMESPACE}"
-                        sh 'kubectl get svc backend-svc -n ${KUBE_NAMESPACE}'
-                        sh 'kubectl get svc frontend-svc -n ${KUBE_NAMESPACE}'
-                    }
+                    sh '''
+                        aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}
+                        kubectl get pods -l version=${verifyEnv} -n ${KUBE_NAMESPACE}
+                        kubectl get svc backend-svc -n ${KUBE_NAMESPACE}
+                        kubectl get svc frontend-svc -n ${KUBE_NAMESPACE}
+                    '''
                 }
             }
         }
