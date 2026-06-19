@@ -33,16 +33,7 @@ pipeline {
             }
         }
 
-        stage('Validate AWS Credentials') {
-            steps {
-                withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY', credentialsId: 'aws-credentials')]) {
-                    sh '''
-                        echo "Validating AWS credentials..."
-                        aws sts get-caller-identity
-                    '''
-                }
-            }
-        }
+        
 
         stage('Code analysis') {
             parallel {
