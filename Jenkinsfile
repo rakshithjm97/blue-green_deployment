@@ -33,20 +33,29 @@ pipeline {
             }
         }
 
+        stage('Validate AWS Credentials') {
+            steps {
+                withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY', credentialsId: 'aws-credentials')]) {
+                    sh '''
+                        echo "Validating AWS credentials..."
+                        aws sts get-caller-identity
+                    '''
+                }
+            }
+        }
+
         stage('Code analysis') {
             parallel {
                 stage('SonarQube frontend analysis') {
                     steps {
-                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                            dir('frontend') {
-                                withSonarQubeEnv('sonar-server') {
-                                    sh '''
-                                        sonar-scanner \
-                                        -Dsonar.projectName=frontend \
-                                        -Dsonar.projectKey=frontend \
-                                        -Dsonar.sources=.
-                                    '''
-                                }
+                        dir('frontend') {
+                            withSonarQubeEnv('sonar-server') {
+                                sh '''
+                                    sonar-scanner \
+                                    -Dsonar.projectName=frontend \
+                                    -Dsonar.projectKey=frontend \
+                                    -Dsonar.sources=.
+                                '''
                             }
                         }
                     }
@@ -54,16 +63,14 @@ pipeline {
 
                 stage('SonarQube backend analysis') {
                     steps {
-                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                            dir('backend') {
-                                withSonarQubeEnv('sonar-server') {
-                                    sh '''
-                                        sonar-scanner \
-                                        -Dsonar.projectName=backend \
-                                        -Dsonar.projectKey=backend \
-                                        -Dsonar.sources=.
-                                    '''
-                                }
+                        dir('backend') {
+                            withSonarQubeEnv('sonar-server') {
+                                sh '''
+                                    sonar-scanner \
+                                    -Dsonar.projectName=backend \
+                                    -Dsonar.projectKey=backend \
+                                    -Dsonar.sources=.
+                                '''
                             }
                         }
                     }
@@ -75,20 +82,16 @@ pipeline {
             parallel {
                 stage('Frontend quality check') {
                     steps {
-                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                            timeout(time: 5, unit: 'MINUTES') {
-                                waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
-                            }
+                        timeout(time: 5, unit: 'MINUTES') {
+                            waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
                         }
                     }
                 }
 
                 stage('Backend quality check') {
                     steps {
-                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                            timeout(time: 5, unit: 'MINUTES') {
-                                waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
-                            }
+                        timeout(time: 5, unit: 'MINUTES') {
+                            waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
                         }
                     }
                 }
@@ -99,24 +102,20 @@ pipeline {
             parallel {
                 stage('OWASP frontend dependency check') {
                     steps {
-                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                            dir('frontend') {
-                                dependencyCheck additionalArguments: "--scan . --disableYarnAudit --disableNodeAudit --nvdApiKey ${NVD_API_KEY}",
-                                    odcInstallation: 'DP-Check'
-                                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
-                            }
+                        dir('frontend') {
+                            dependencyCheck additionalArguments: "--scan . --disableYarnAudit --disableNodeAudit --nvdApiKey ${NVD_API_KEY}",
+                                odcInstallation: 'DP-Check'
+                            dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
                         }
                     }
                 }
 
                 stage('OWASP backend dependency check') {
                     steps {
-                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                            dir('backend') {
-                                dependencyCheck additionalArguments: "--scan . --nvdApiKey ${NVD_API_KEY}",
-                                    odcInstallation: 'DP-Check'
-                                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
-                            }
+                        dir('backend') {
+                            dependencyCheck additionalArguments: "--scan . --nvdApiKey ${NVD_API_KEY}",
+                                odcInstallation: 'DP-Check'
+                            dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
                         }
                     }
                 }
@@ -127,14 +126,12 @@ pipeline {
             parallel {
                 stage('Trivy frontend file scan') {
                     steps {
-                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                            dir('frontend') {
-                                sh 'trivy fs . > trivyfs.txt'
-                                script {
-                                    def scanResults = readFile('trivyfs.txt')
-                                    if (scanResults.contains('CRITICAL')) {
-                                        echo 'Warning: critical vulnerability found in frontend files'
-                                    }
+                        dir('frontend') {
+                            sh 'trivy fs . > trivyfs.txt'
+                            script {
+                                def scanResults = readFile('trivyfs.txt')
+                                if (scanResults.contains('CRITICAL')) {
+                                    echo 'Warning: critical vulnerability found in frontend files'
                                 }
                             }
                         }
@@ -143,14 +140,12 @@ pipeline {
 
                 stage('Trivy backend file scan') {
                     steps {
-                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                            dir('backend') {
-                                sh 'trivy fs . > trivyfs.txt'
-                                script {
-                                    def scanResults = readFile('trivyfs.txt')
-                                    if (scanResults.contains('CRITICAL')) {
-                                        echo 'Warning: critical vulnerability found in backend files'
-                                    }
+                        dir('backend') {
+                            sh 'trivy fs . > trivyfs.txt'
+                            script {
+                                def scanResults = readFile('trivyfs.txt')
+                                if (scanResults.contains('CRITICAL')) {
+                                    echo 'Warning: critical vulnerability found in backend files'
                                 }
                             }
                         }
@@ -163,7 +158,7 @@ pipeline {
             parallel {
                 stage('Build and push frontend image') {
                     steps {
-                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                        withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY', credentialsId: 'aws-credentials')]) {
                             sh '''
                                 USED_DISK_SPACE=$(df / | tail -1 | awk '{print $5}' | sed 's/%//')
                                 if [ "$USED_DISK_SPACE" -gt 80 ]; then
@@ -184,7 +179,7 @@ pipeline {
 
                 stage('Build and push backend image') {
                     steps {
-                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                        withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY', credentialsId: 'aws-credentials')]) {
                             sh 'docker build -t ${AWS_ECR_BACKEND_REPO_NAME}:${TAG} -f ./backend/Dockerfile ./backend'
                             sh 'docker tag ${AWS_ECR_BACKEND_REPO_NAME}:${TAG} ${REPOSITORY_URL}/${AWS_ECR_BACKEND_REPO_NAME}:${TAG}'
                             sh 'aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${REPOSITORY_URL}'
@@ -199,24 +194,20 @@ pipeline {
             parallel {
                 stage('Frontend docker image scan') {
                     steps {
-                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                            sh 'trivy image ${REPOSITORY_URL}/${AWS_ECR_FRONTEND_REPO_NAME}:${TAG} > trivyimage-frontend.txt'
-                            script {
-                                def scanResults = readFile('trivyimage-frontend.txt')
-                                echo "Frontend scan results:\n${scanResults}"
-                            }
+                        sh 'trivy image ${REPOSITORY_URL}/${AWS_ECR_FRONTEND_REPO_NAME}:${TAG} > trivyimage-frontend.txt'
+                        script {
+                            def scanResults = readFile('trivyimage-frontend.txt')
+                            echo "Frontend scan results:\n${scanResults}"
                         }
                     }
                 }
 
                 stage('Backend docker image scan') {
                     steps {
-                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                            sh 'trivy image ${REPOSITORY_URL}/${AWS_ECR_BACKEND_REPO_NAME}:${TAG} > trivyimage-backend.txt'
-                            script {
-                                def scanResults = readFile('trivyimage-backend.txt')
-                                echo "Backend scan results:\n${scanResults}"
-                            }
+                        sh 'trivy image ${REPOSITORY_URL}/${AWS_ECR_BACKEND_REPO_NAME}:${TAG} > trivyimage-backend.txt'
+                        script {
+                            def scanResults = readFile('trivyimage-backend.txt')
+                            echo "Backend scan results:\n${scanResults}"
                         }
                     }
                 }
@@ -225,7 +216,7 @@ pipeline {
 
         stage('Deploy MongoDB and service') {
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY', credentialsId: 'aws-credentials')]) {
                     dir('Kubernetes-Manifests-file') {
                         sh 'aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}'
                         sh 'kubectl apply -f Database -n ${KUBE_NAMESPACE}'
@@ -236,7 +227,7 @@ pipeline {
 
         stage('Deploy Frontend and Backend Services') {
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY', credentialsId: 'aws-credentials')]) {
                     dir('Kubernetes-Manifests-file/Service') {
                         sh '''
                             aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}
@@ -251,7 +242,7 @@ pipeline {
 
         stage('Deploy to Kubernetes') {
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY', credentialsId: 'aws-credentials')]) {
                     dir('Kubernetes-Manifests-file/Deployment') {
                         script {
                             def deploymentFrontend = ''
@@ -281,7 +272,7 @@ pipeline {
             }
 
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY', credentialsId: 'aws-credentials')]) {
                     script {
                         def newEnv = params.DEPLOY_ENV
 
@@ -299,7 +290,7 @@ pipeline {
 
         stage('Verify Deployment') {
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY', credentialsId: 'aws-credentials')]) {
                     script {
                         def verifyEnv = params.DEPLOY_ENV
 
