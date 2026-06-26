@@ -16,7 +16,6 @@ pipeline {
         AWS_ECR_FRONTEND_REPO_NAME = 'ecr_repo01'
         AWS_ECR_BACKEND_REPO_NAME = 'ecr_repo02'
         AWS_DEFAULT_REGION = 'ap-south-1'
-        REPOSITORY_URL = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
         NVD_API_KEY = credentials('mvd-api-key')
     }
 
@@ -29,7 +28,7 @@ pipeline {
 
         stage('Checkout from git') {
             steps {
-                git branch: 'main', credentialsId: 'GITHUB', url: 'https://github.com/rakshithjm97/blue-green_deployment.git'
+                git branch: 'main', url: 'https://github.com/rakshithjm97/blue-green_deployment.git'
             }
         }
 
@@ -39,14 +38,17 @@ pipeline {
             parallel {
                 stage('SonarQube frontend analysis') {
                     steps {
-                        dir('frontend') {
+                                dir('frontend') {
                             withSonarQubeEnv('sonar-server') {
-                                sh '''
-                                    sonar-scanner \
-                                    -Dsonar.projectName=frontend \
-                                    -Dsonar.projectKey=frontend \
-                                    -Dsonar.sources=.
-                                '''
+                                withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                                    sh '''
+                                        sonar-scanner \
+                                        -Dsonar.projectName=frontend \
+                                        -Dsonar.projectKey=frontend \
+                                        -Dsonar.sources=. \
+                                        -Dsonar.login=$SONAR_TOKEN
+                                    '''
+                                }
                             }
                         }
                     }
@@ -56,12 +58,15 @@ pipeline {
                     steps {
                         dir('backend') {
                             withSonarQubeEnv('sonar-server') {
-                                sh '''
-                                    sonar-scanner \
-                                    -Dsonar.projectName=backend \
-                                    -Dsonar.projectKey=backend \
-                                    -Dsonar.sources=.
-                                '''
+                                withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                                    sh '''
+                                        sonar-scanner \
+                                        -Dsonar.projectName=backend \
+                                        -Dsonar.projectKey=backend \
+                                        -Dsonar.sources=. \
+                                        -Dsonar.login=$SONAR_TOKEN
+                                    '''
+                                }
                             }
                         }
                     }
@@ -160,10 +165,13 @@ pipeline {
                                     echo "Disk space is below 80%, skipping prune"
                                 fi
                             '''
-                            sh 'docker build -t ${AWS_ECR_FRONTEND_REPO_NAME}:${TAG} -f ./frontend/Dockerfile ./frontend'
-                            sh 'docker tag ${AWS_ECR_FRONTEND_REPO_NAME}:${TAG} ${REPOSITORY_URL}/${AWS_ECR_FRONTEND_REPO_NAME}:${TAG}'
-                            sh 'aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${REPOSITORY_URL}'
-                            sh 'docker push ${REPOSITORY_URL}/${AWS_ECR_FRONTEND_REPO_NAME}:${TAG}'
+                            sh '''
+                                docker build -t ${AWS_ECR_FRONTEND_REPO_NAME}:${TAG} -f ./frontend/Dockerfile ./frontend
+                                REPOSITORY_URL=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+                                docker tag ${AWS_ECR_FRONTEND_REPO_NAME}:${TAG} $REPOSITORY_URL/${AWS_ECR_FRONTEND_REPO_NAME}:${TAG}
+                                aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin $REPOSITORY_URL
+                                docker push $REPOSITORY_URL/${AWS_ECR_FRONTEND_REPO_NAME}:${TAG}
+                            '''
                         }
                     }
                 }
@@ -171,10 +179,13 @@ pipeline {
                 stage('Build and push backend image') {
                     steps {
                         withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY', credentialsId: 'aws-credentials')]) {
-                            sh 'docker build -t ${AWS_ECR_BACKEND_REPO_NAME}:${TAG} -f ./backend/Dockerfile ./backend'
-                            sh 'docker tag ${AWS_ECR_BACKEND_REPO_NAME}:${TAG} ${REPOSITORY_URL}/${AWS_ECR_BACKEND_REPO_NAME}:${TAG}'
-                            sh 'aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${REPOSITORY_URL}'
-                            sh 'docker push ${REPOSITORY_URL}/${AWS_ECR_BACKEND_REPO_NAME}:${TAG}'
+                            sh '''
+                                docker build -t ${AWS_ECR_BACKEND_REPO_NAME}:${TAG} -f ./backend/Dockerfile ./backend
+                                REPOSITORY_URL=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+                                docker tag ${AWS_ECR_BACKEND_REPO_NAME}:${TAG} $REPOSITORY_URL/${AWS_ECR_BACKEND_REPO_NAME}:${TAG}
+                                aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin $REPOSITORY_URL
+                                docker push $REPOSITORY_URL/${AWS_ECR_BACKEND_REPO_NAME}:${TAG}
+                            '''
                         }
                     }
                 }
