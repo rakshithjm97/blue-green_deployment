@@ -46,7 +46,7 @@ pipeline {
                                         -Dsonar.projectName=frontend \
                                         -Dsonar.projectKey=frontend \
                                         -Dsonar.sources=. \
-                                        -Dsonar.login=$SONAR_TOKEN
+                                        -Dsonar.tocken=$SONAR_TOKEN
                                     '''
                                 }
                             }
@@ -67,7 +67,7 @@ pipeline {
                                         -Dsonar.projectName=backend \
                                         -Dsonar.projectKey=backend \
                                         -Dsonar.sources=. \
-                                        -Dsonar.login=$SONAR_TOKEN
+                                        -Dsonar.token=$SONAR_TOKEN
                                     '''
                                 }
                             }
