@@ -51,6 +51,9 @@ pipeline {
                                 }
                             }
                         }
+                        timeout(time: 5, unit: 'MINUTES') {
+                        waitForQualityGate abortPipeline: false
+                        }
                     }
                 }
 
@@ -69,6 +72,11 @@ pipeline {
                                 }
                             }
                         }
+
+                        timeout(time: 5, unit: 'MINUTES') {
+                        waitForQualityGate abortPipeline: false
+                        }
+                    }
                     }
                 }
             }
