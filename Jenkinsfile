@@ -77,7 +77,6 @@ pipeline {
                         waitForQualityGate abortPipeline: false
                         }
                     }
-                    }
                 }
             }
         }
@@ -325,4 +324,5 @@ pipeline {
             }
         }
     }
+}
 
