@@ -47,7 +47,7 @@ pipeline {
                                         -Dsonar.projectKey=frontend \
                                         -Dsonar.sources=. \
                                         -Dsonar.host.url=$SONAR_HOST_URL \
-                                        -Dsonar.login=$SONAR_TOKEN
+                                        -Dsonar.token=$SONAR_TOKEN
                                     '''
                                 }
                                 timeout(time: 10, unit: 'MINUTES') {
@@ -69,7 +69,7 @@ pipeline {
                                         -Dsonar.projectKey=backend \
                                         -Dsonar.sources=. \
                                         -Dsonar.host.url=$SONAR_HOST_URL \
-                                        -Dsonar.login=$SONAR_TOKEN
+                                        -Dsonar.token=$SONAR_TOKEN
                                     '''
                                 }
                                 timeout(time: 10, unit: 'MINUTES') {
