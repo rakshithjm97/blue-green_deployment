@@ -35,7 +35,7 @@ pipeline {
         
 
         stage('Code analysis') {
-            parallel {
+            stages {
                 stage('SonarQube frontend analysis') {
                     steps {
                         dir('frontend') {
@@ -50,9 +50,9 @@ pipeline {
                                         -Dsonar.token=$SONAR_TOKEN
                                     '''
                                 }
-                                timeout(time: 10, unit: 'MINUTES') {
-                                    waitForQualityGate abortPipeline: false
-                                }
+                            }
+                            timeout(time: 10, unit: 'MINUTES') {
+                                waitForQualityGate abortPipeline: false
                             }
                         }
                     }
@@ -72,9 +72,9 @@ pipeline {
                                         -Dsonar.token=$SONAR_TOKEN
                                     '''
                                 }
-                                timeout(time: 10, unit: 'MINUTES') {
-                                    waitForQualityGate abortPipeline: false
-                                }
+                            }
+                            timeout(time: 10, unit: 'MINUTES') {
+                                waitForQualityGate abortPipeline: false
                             }
                         }
                     }
