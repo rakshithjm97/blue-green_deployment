@@ -38,7 +38,7 @@ pipeline {
             parallel {
                 stage('SonarQube frontend analysis') {
                     steps {
-                                dir('frontend') {
+                        dir('frontend') {
                             withSonarQubeEnv('sonar-server') {
                                 withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
                                     sh '''
@@ -46,13 +46,14 @@ pipeline {
                                         -Dsonar.projectName=frontend \
                                         -Dsonar.projectKey=frontend \
                                         -Dsonar.sources=. \
-                                        -Dsonar.token=$SONAR_TOKEN
+                                        -Dsonar.host.url=$SONAR_HOST_URL \
+                                        -Dsonar.login=$SONAR_TOKEN
                                     '''
                                 }
+                                timeout(time: 10, unit: 'MINUTES') {
+                                    waitForQualityGate abortPipeline: false
+                                }
                             }
-                        }
-                        timeout(time: 5, unit: 'MINUTES') {
-                        waitForQualityGate abortPipeline: false
                         }
                     }
                 }
@@ -67,34 +68,14 @@ pipeline {
                                         -Dsonar.projectName=backend \
                                         -Dsonar.projectKey=backend \
                                         -Dsonar.sources=. \
-                                        -Dsonar.token=$SONAR_TOKEN
+                                        -Dsonar.host.url=$SONAR_HOST_URL \
+                                        -Dsonar.login=$SONAR_TOKEN
                                     '''
                                 }
+                                timeout(time: 10, unit: 'MINUTES') {
+                                    waitForQualityGate abortPipeline: false
+                                }
                             }
-                        }
-
-                        timeout(time: 5, unit: 'MINUTES') {
-                        waitForQualityGate abortPipeline: false
-                        }
-                    }
-                }
-            }
-        }
-
-        stage('Quality check') {
-            parallel {
-                stage('Frontend quality check') {
-                    steps {
-                        timeout(time: 5, unit: 'MINUTES') {
-                            waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
-                        }
-                    }
-                }
-
-                stage('Backend quality check') {
-                    steps {
-                        timeout(time: 5, unit: 'MINUTES') {
-                            waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
                         }
                     }
                 }
