@@ -51,9 +51,14 @@ pipeline {
                                     '''
                                 }
                             }
-                            timeout(time: 10, unit: 'MINUTES') {
-                                waitForQualityGate abortPipeline: false
-                            }
+                        }
+                    }
+                }
+
+                stage('SonarQube frontend quality gate') {
+                    steps {
+                        timeout(time: 30, unit: 'MINUTES') {
+                            waitForQualityGate abortPipeline: false
                         }
                     }
                 }
@@ -73,9 +78,14 @@ pipeline {
                                     '''
                                 }
                             }
-                            timeout(time: 10, unit: 'MINUTES') {
-                                waitForQualityGate abortPipeline: false
-                            }
+                        }
+                    }
+                }
+
+                stage('SonarQube backend quality gate') {
+                    steps {
+                        timeout(time: 30, unit: 'MINUTES') {
+                            waitForQualityGate abortPipeline: false
                         }
                     }
                 }
