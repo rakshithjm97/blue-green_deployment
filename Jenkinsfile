@@ -46,7 +46,7 @@ pipeline {
                                         -Dsonar.projectName=frontend \
                                         -Dsonar.projectKey=frontend \
                                         -Dsonar.sources=. \
-                                        -Dsonar.tocken=$SONAR_TOKEN
+                                        -Dsonar.token=$SONAR_TOKEN
                                     '''
                                 }
                             }
@@ -204,7 +204,13 @@ pipeline {
             parallel {
                 stage('Frontend docker image scan') {
                     steps {
-                        sh 'trivy image ${REPOSITORY_URL}/${AWS_ECR_FRONTEND_REPO_NAME}:${TAG} > trivyimage-frontend.txt'
+                        withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY', credentialsId: 'aws-credentials')]) {
+                            sh '''
+                                REPOSITORY_URL=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+                                aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin $REPOSITORY_URL
+                                trivy image $REPOSITORY_URL/${AWS_ECR_FRONTEND_REPO_NAME}:${TAG} > trivyimage-frontend.txt
+                            '''
+                        }
                         script {
                             def scanResults = readFile('trivyimage-frontend.txt')
                             echo "Frontend scan results:\n${scanResults}"
@@ -214,7 +220,13 @@ pipeline {
 
                 stage('Backend docker image scan') {
                     steps {
-                        sh 'trivy image ${REPOSITORY_URL}/${AWS_ECR_BACKEND_REPO_NAME}:${TAG} > trivyimage-backend.txt'
+                        withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY', credentialsId: 'aws-credentials')]) {
+                            sh '''
+                                REPOSITORY_URL=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+                                aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin $REPOSITORY_URL
+                                trivy image $REPOSITORY_URL/${AWS_ECR_BACKEND_REPO_NAME}:${TAG} > trivyimage-backend.txt
+                            '''
+                        }
                         script {
                             def scanResults = readFile('trivyimage-backend.txt')
                             echo "Backend scan results:\n${scanResults}"
@@ -286,13 +298,11 @@ pipeline {
                     script {
                         def newEnv = params.DEPLOY_ENV
 
-                        sh '''
+                        sh """
                             aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}
-                            kubectl patch svc backend-svc -p '{"spec": {"selector": {"app": "backend", "version": "${newEnv}"}}}' -n ${KUBE_NAMESPACE}
-                            kubectl patch svc frontend-svc -p '{"spec": {"selector": {"app": "frontend", "version": "${newEnv}"}}}' -n ${KUBE_NAMESPACE}
-                        '''
-
-                        echo "Traffic has been switched successfully to the ${newEnv} environment"
+                            kubectl patch svc backend-svc -p '{\"spec\":{\"selector\":{\"app\":\"backend\",\"version\":\"${newEnv}\"}}}' -n ${KUBE_NAMESPACE}
+                            kubectl patch svc frontend-svc -p '{\"spec\":{\"selector\":{\"app\":\"frontend\",\"version\":\"${newEnv}\"}}}' -n ${KUBE_NAMESPACE}
+                        """
                     }
                 }
             }
@@ -315,4 +325,4 @@ pipeline {
             }
         }
     }
-}
+
