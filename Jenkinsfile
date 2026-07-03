@@ -58,7 +58,9 @@ pipeline {
                 stage('SonarQube frontend quality gate') {
                     steps {
                         timeout(time: 30, unit: 'MINUTES') {
-                            waitForQualityGate abortPipeline: false
+                            withSonarQubeEnv('sonar-server') {
+                                waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
+                            }
                         }
                     }
                 }
@@ -85,7 +87,9 @@ pipeline {
                 stage('SonarQube backend quality gate') {
                     steps {
                         timeout(time: 30, unit: 'MINUTES') {
-                            waitForQualityGate abortPipeline: false
+                            withSonarQubeEnv('sonar-server') {
+                                waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
+                            }
                         }
                     }
                 }
