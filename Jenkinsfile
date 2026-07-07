@@ -101,8 +101,7 @@ pipeline {
                 dir('frontend') {
                     catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
                         dependencyCheck additionalArguments: "--scan . --disableYarnAudit --disableNodeAudit --nvdApiKey ${NVD_API_KEY} --noupdate",
-                            odcInstallation: 'DP-Check',
-                            failOnError: false
+                            odcInstallation: 'DP-Check'
                         dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
                     }
                 }
@@ -110,8 +109,7 @@ pipeline {
                 dir('backend') {
                     catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
                         dependencyCheck additionalArguments: "--scan . --nvdApiKey ${NVD_API_KEY} --noupdate",
-                            odcInstallation: 'DP-Check',
-                            failOnError: false
+                            odcInstallation: 'DP-Check'
                         dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
                     }
                 }
