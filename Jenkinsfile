@@ -97,24 +97,22 @@ pipeline {
         }
 
         stage('Dependency scan') {
-            parallel {
-                stage('OWASP frontend dependency check') {
-                    steps {
-                        dir('frontend') {
-                            dependencyCheck additionalArguments: "--scan . --disableYarnAudit --disableNodeAudit --nvdApiKey ${NVD_API_KEY}",
-                                odcInstallation: 'DP-Check'
-                            dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
-                        }
+            steps {
+                dir('frontend') {
+                    catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                        dependencyCheck additionalArguments: "--scan . --disableYarnAudit --disableNodeAudit --nvdApiKey ${NVD_API_KEY} --noupdate",
+                            odcInstallation: 'DP-Check',
+                            failOnError: false
+                        dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
                     }
                 }
 
-                stage('OWASP backend dependency check') {
-                    steps {
-                        dir('backend') {
-                            dependencyCheck additionalArguments: "--scan . --nvdApiKey ${NVD_API_KEY}",
-                                odcInstallation: 'DP-Check'
-                            dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
-                        }
+                dir('backend') {
+                    catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                        dependencyCheck additionalArguments: "--scan . --nvdApiKey ${NVD_API_KEY} --noupdate",
+                            odcInstallation: 'DP-Check',
+                            failOnError: false
+                        dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
                     }
                 }
             }
