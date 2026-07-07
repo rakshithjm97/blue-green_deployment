@@ -1,3 +1,16 @@
+def awsCredentialCheck() {
+    sh '''
+        if [ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$AWS_SECRET_ACCESS_KEY" ]; then
+            echo "Using AWS credentials from environment variables"
+        elif [ -f "$HOME/.aws/credentials" ] || [ -f /root/.aws/credentials ]; then
+            echo "Using AWS CLI credentials from local config"
+        else
+            echo "AWS credentials are not configured. Configure AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or ~/.aws/credentials before running deployment stages."
+            exit 1
+        fi
+    '''
+}
+
 pipeline {
     agent any
 
@@ -152,7 +165,8 @@ pipeline {
             parallel {
                 stage('Build and push frontend image') {
                     steps {
-                        withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY', credentialsId: 'aws-credentials')]) {
+                        script {
+                            awsCredentialCheck()
                             sh '''
                                 USED_DISK_SPACE=$(df / | tail -1 | awk '{print $5}' | sed 's/%//')
                                 if [ "$USED_DISK_SPACE" -gt 80 ]; then
@@ -176,7 +190,8 @@ pipeline {
 
                 stage('Build and push backend image') {
                     steps {
-                        withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY', credentialsId: 'aws-credentials')]) {
+                        script {
+                            awsCredentialCheck()
                             sh '''
                                 docker build -t ${AWS_ECR_BACKEND_REPO_NAME}:${TAG} -f ./backend/Dockerfile ./backend
                                 REPOSITORY_URL=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
@@ -194,7 +209,8 @@ pipeline {
             parallel {
                 stage('Frontend docker image scan') {
                     steps {
-                        withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY', credentialsId: 'aws-credentials')]) {
+                        script {
+                            awsCredentialCheck()
                             sh '''
                                 REPOSITORY_URL=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
                                 aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin $REPOSITORY_URL
@@ -210,7 +226,8 @@ pipeline {
 
                 stage('Backend docker image scan') {
                     steps {
-                        withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY', credentialsId: 'aws-credentials')]) {
+                        script {
+                            awsCredentialCheck()
                             sh '''
                                 REPOSITORY_URL=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
                                 aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin $REPOSITORY_URL
@@ -228,7 +245,8 @@ pipeline {
 
         stage('Deploy MongoDB and service') {
             steps {
-                withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY', credentialsId: 'aws-credentials')]) {
+                script {
+                    awsCredentialCheck()
                     dir('Kubernetes-Manifests-file') {
                         sh 'aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}'
                         sh 'kubectl apply -f Database -n ${KUBE_NAMESPACE}'
@@ -239,7 +257,8 @@ pipeline {
 
         stage('Deploy Frontend and Backend Services') {
             steps {
-                withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY', credentialsId: 'aws-credentials')]) {
+                script {
+                    awsCredentialCheck()
                     dir('Kubernetes-Manifests-file/Service') {
                         sh '''
                             aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}
@@ -254,7 +273,8 @@ pipeline {
 
         stage('Deploy to Kubernetes') {
             steps {
-                withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY', credentialsId: 'aws-credentials')]) {
+                script {
+                    awsCredentialCheck()
                     dir('Kubernetes-Manifests-file/Deployment') {
                         script {
                             def deploymentFrontend = ''
@@ -284,33 +304,31 @@ pipeline {
             }
 
             steps {
-                withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY', credentialsId: 'aws-credentials')]) {
-                    script {
-                        def newEnv = params.DEPLOY_ENV
+                script {
+                    awsCredentialCheck()
+                    def newEnv = params.DEPLOY_ENV
 
-                        sh """
-                            aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}
-                            kubectl patch svc backend-svc -p '{\"spec\":{\"selector\":{\"app\":\"backend\",\"version\":\"${newEnv}\"}}}' -n ${KUBE_NAMESPACE}
-                            kubectl patch svc frontend-svc -p '{\"spec\":{\"selector\":{\"app\":\"frontend\",\"version\":\"${newEnv}\"}}}' -n ${KUBE_NAMESPACE}
-                        """
-                    }
+                    sh """
+                        aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}
+                        kubectl patch svc backend-svc -p '{\"spec\":{\"selector\":{\"app\":\"backend\",\"version\":\"${newEnv}\"}}}' -n ${KUBE_NAMESPACE}
+                        kubectl patch svc frontend-svc -p '{\"spec\":{\"selector\":{\"app\":\"frontend\",\"version\":\"${newEnv}\"}}}' -n ${KUBE_NAMESPACE}
+                    """
                 }
             }
         }
 
         stage('Verify Deployment') {
             steps {
-                withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY', credentialsId: 'aws-credentials')]) {
-                    script {
-                        def verifyEnv = params.DEPLOY_ENV
+                script {
+                    awsCredentialCheck()
+                    def verifyEnv = params.DEPLOY_ENV
 
-                        sh '''
-                            aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}
-                            kubectl get pods -l version=${verifyEnv} -n ${KUBE_NAMESPACE}
-                            kubectl get svc backend-svc -n ${KUBE_NAMESPACE}
-                            kubectl get svc frontend-svc -n ${KUBE_NAMESPACE}
-                        '''
-                    }
+                    sh '''
+                        aws eks update-kubeconfig --name bg-cluster --region ${AWS_DEFAULT_REGION}
+                        kubectl get pods -l version=${verifyEnv} -n ${KUBE_NAMESPACE}
+                        kubectl get svc backend-svc -n ${KUBE_NAMESPACE}
+                        kubectl get svc frontend-svc -n ${KUBE_NAMESPACE}
+                    '''
                 }
             }
         }
